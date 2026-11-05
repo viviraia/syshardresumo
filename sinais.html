@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sinais — SisHard Resumo</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav id="sidebar"></nav>
+<main>
+<p class="kicker">Aulas 14 e 15 · <span class="badge af">cai na AF</span></p>
+<h1>Sinais: envio, captura e bloqueio</h1>
+<p class="lead">Sinais são o jeito de o SO (ou de outro processo) avisar um processo de que <em>algo aconteceu</em>. Na AF aparecem como "capture o Ctrl+C, salve o estado em arquivo e termine".</p>
+<div id="page-toc" class="page-toc"></div>
+
+<h2 id="conceito">O que é um sinal</h2>
+<div class="box def"><span class="box-title">Definição</span>
+<p>Um sinal é uma <strong>notificação assíncrona</strong> enviada a um processo para indicar que algo ocorreu: um erro ou exceção de hardware, uma mudança no sistema, ou o pedido do usuário para parar ou finalizar. É uma <strong>"exceção de software"</strong>: o kernel interrompe o fluxo normal do processo para entregá-lo. O sinal não carrega dados, só o número.</p></div>
+<p><strong>Quem envia:</strong></p>
+<ul>
+<li>o <strong>kernel</strong>, ao detectar um evento: divisão por zero (SIGFPE), acesso inválido à memória (SIGSEGV), filho terminou (SIGCHLD), Ctrl+C no terminal (SIGINT);</li>
+<li><strong>outro processo</strong>, via a syscall <code>kill</code> (do mesmo usuário; o root pode enviar para qualquer processo).</li>
+</ul>
+<p><strong>O que o destinatário pode fazer:</strong></p>
+<ul>
+<li><strong>ignorar</strong>;</li>
+<li><strong>terminar</strong> (às vezes com core dump);</li>
+<li><strong>parar/continuar</strong>;</li>
+<li><strong>capturar</strong>, executando um <em>signal handler</em> definido pelo programador.</li>
+</ul>
+<p>Um sinal também pode ficar <strong>bloqueado</strong> (pendente) até ser desbloqueado.</p>
+<p>A <strong>captura</strong> segue este caminho:</p>
+<ol>
+<li>o sinal chega durante a instrução I<sub>curr</sub>;</li>
+<li>o controle passa para o handler;</li>
+<li>o handler executa;</li>
+<li>o handler retorna para a instrução I<sub>next</sub>, e o programa continua de onde parou.</li>
+</ol>
+
+<h2 id="tabela">Sinais que você precisa conhecer</h2>
+<div class="table-wrap"><table>
+<tr><th>Sinal</th><th>Nº (x86 Linux)</th><th>Ação padrão</th><th>Quando</th></tr>
+<tr><td><code>SIGINT</code></td><td>2</td><td>Termina</td><td><strong>Ctrl+C</strong> no terminal</td></tr>
+<tr><td><code>SIGQUIT</code></td><td>3</td><td>Termina + core</td><td>Ctrl+\</td></tr>
+<tr><td><code>SIGILL</code></td><td>4</td><td>Termina + core</td><td>Instrução ilegal</td></tr>
+<tr><td><code>SIGABRT</code></td><td>6</td><td>Termina + core</td><td><code>abort()</code>, falha de <code>assert</code></td></tr>
+<tr><td><code>SIGFPE</code></td><td>8</td><td>Termina + core</td><td>Operação aritmética inválida (<strong>divisão inteira por zero</strong>)</td></tr>
+<tr><td><code>SIGKILL</code></td><td>9</td><td>Termina</td><td><strong>Não pode ser capturado, ignorado nem bloqueado</strong></td></tr>
+<tr><td><code>SIGUSR1</code> / <code>SIGUSR2</code></td><td>10 / 12</td><td>Termina</td><td>Livres para uso do programador</td></tr>
+<tr><td><code>SIGSEGV</code></td><td>11</td><td>Termina + core</td><td>Acesso a memória não mapeada (segmentation fault)</td></tr>
+<tr><td><code>SIGALRM</code></td><td>14</td><td>Termina</td><td>Timer de <code>alarm()</code></td></tr>
+<tr><td><code>SIGTERM</code></td><td>15</td><td>Termina</td><td>Pedido educado de término (padrão do comando <code>kill</code>)</td></tr>
+<tr><td><code>SIGCHLD</code></td><td>17</td><td>Ignora</td><td>Um filho terminou, parou ou continuou</td></tr>
+<tr><td><code>SIGCONT</code></td><td>18</td><td>Continua</td><td>Retoma um processo parado (<code>fg</code>/<code>bg</code>)</td></tr>
+<tr><td><code>SIGSTOP</code></td><td>19</td><td>Para</td><td>Pausa forçada, <strong>não pode ser capturado</strong></td></tr>
+<tr><td><code>SIGTSTP</code></td><td>20</td><td>Para</td><td><strong>Ctrl+Z</strong> (este pode ser capturado)</td></tr>
+</table></div>
+<p>A lista completa e os números ficam em <code>man 7 signal</code> ("Signal numbering for standard signals"). Prefira sempre o <strong>nome</strong> (<code>SIGINT</code>) ao número.</p>
+
+<h2 id="enviar">Enviando sinais</h2>
+<h3>No terminal</h3>
+<pre><code>kill -9 1234            # SIGKILL para o pid 1234
+kill -s SIGINT 1234     # SIGINT
+kill -USR1 1234         # SIGUSR1
+kill 1234               # sem opção = SIGTERM
+kill -l                 # lista os sinais
+./prog ; kill -l $?     # após o término: mostra o sinal que matou o prog (ex.: INT)</code></pre>
+<p>O shell devolve <code>$? = 128 + nº do sinal</code> quando o processo morre por sinal (130 = SIGINT, 137 = SIGKILL).</p>
+<h3>No programa</h3>
+<pre data-lang="c"><code>#include &lt;signal.h&gt;
+int kill(pid_t pid, int sig);   // envia sig para pid
+int raise(int sig);             // envia para si mesmo (= kill(getpid(), sig))
+
+kill(filho, SIGKILL);           // pai mata o filho
+kill(getpid(), SIGINT);         // processo manda SIGINT para si próprio</code></pre>
+<pre data-lang="c"><code>// pai espera 10 s e mata o filho SÓ se ele ainda estiver rodando (WNOHANG)
+sleep(10);
+int st;
+if (waitpid(filho, &amp;st, WNOHANG) == 0) {   // 0 = ainda não terminou
+    kill(filho, SIGKILL);
+    waitpid(filho, &amp;st, 0);
+}
+if (WIFSIGNALED(st)) printf("filho morreu por %s\n", strsignal(WTERMSIG(st)));</code></pre>
+
+<h2 id="sigaction">Capturando sinais com sigaction</h2>
+<div class="box trap"><span class="box-title">Use sigaction, não signal</span>
+<p>A função <code>signal()</code> é considerada obsoleta. A disciplina usa <code>sigaction</code>, que permite configurar o bloqueio de sinais durante o handler.</p></div>
+<pre data-lang="c"><code>#include &lt;signal.h&gt;
+int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
+
+struct sigaction {
+    void     (*sa_handler)(int);   // função handler, SIG_DFL (padrão) ou SIG_IGN (ignorar)
+    sigset_t sa_mask;              // sinais BLOQUEADOS enquanto o handler roda
+    int      sa_flags;             // opções: usamos 0
+    /* ... */
+};</code></pre>
+<h3>Receita (decore!)</h3>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;signal.h&gt;
+
+void sig_handler(int num) {          // assinatura obrigatória: void f(int)
+    printf("Recebi o sinal %d\n", num);
+}
+
+int main() {
+    struct sigaction s;
+    s.sa_handler = sig_handler;      // 1) a função
+    sigemptyset(&amp;s.sa_mask);         // 2) máscara vazia (não bloqueia nada extra)
+    s.sa_flags = 0;                  // 3) sem flags
+    sigaction(SIGINT, &amp;s, NULL);     // 4) registra para SIGINT (oldact = NULL)
+
+    printf("Meu pid: %d\n", getpid());
+    while (1) sleep(1);
+    return 0;
+}</code></pre>
+<p>Compile e mande sinais de outro terminal com <code>kill -s SIGINT &lt;pid&gt;</code>. Para não precisar de dois terminais, rode com <code>./prog &amp;</code> e use o pid mostrado.</p>
+
+<h3 id="ctrlc3">Sair só no 3º Ctrl+C, terminando DE VERDADE pelo sinal</h3>
+<p>Com <code>exit(0)</code> no handler, o shell acha que o programa terminou normalmente. O correto é <strong>restaurar o comportamento padrão (<code>SIG_DFL</code>) e reenviar o sinal</strong> para si mesmo:</p>
+<pre data-lang="c"><code>int contador = 0;
+
+void sig_handler(int num) {
+    contador++;
+    printf("Chamou Ctrl+C\n");
+    if (contador == 3) {
+        struct sigaction padrao;
+        padrao.sa_handler = SIG_DFL;     // volta ao padrão (terminar)
+        padrao.sa_flags = 0;
+        sigemptyset(&amp;padrao.sa_mask);
+        sigaction(SIGINT, &amp;padrao, NULL);
+        kill(getpid(), SIGINT);          // ou raise(SIGINT): agora termina por SIGINT
+    }
+}</code></pre>
+
+<h3 id="salvar">Padrão da AF: ao receber SIGINT, salvar o estado e encerrar</h3>
+<p>Na Q3 do simulado, o π é calculado num laço infinito. Os pontos se dividem assim: <strong>mostrar o PID</strong> (10%), <strong>imprimir o valor no SIGINT e encerrar</strong> (60%) e <strong>salvar em <code>pi.txt</code></strong> com <code>open</code>/<code>write</code> (30%).</p>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;fcntl.h&gt;
+
+double pi = 0.0;                      // global: o handler enxerga
+
+void exporta_pi() {
+    int fd = open("pi.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "%f\n", pi);
+    write(fd, buf, n);
+    close(fd);
+}
+
+void aproxima_pi(void);              // já vem pronta no enunciado (laço infinito)
+
+void handler_sigint(int sig) {
+    printf("pi = %f\n", pi);
+    exporta_pi();
+    exit(0);                          // ou SIG_DFL + raise(SIGINT)
+}
+
+int main() {
+    printf("PID: %d\n", getpid());
+    struct sigaction s;
+    s.sa_handler = handler_sigint;
+    sigemptyset(&amp;s.sa_mask);
+    s.sa_flags = 0;
+    sigaction(SIGINT, &amp;s, NULL);      // registrar NA MAIN, antes do laço
+    aproxima_pi();                    // laço infinito
+}</code></pre>
+<div class="box exam"><span class="box-title">Checklist para a questão de sinais</span>
+<ul>
+<li>O handler é uma função separada com a assinatura <code>void h(int)</code>, registrada <strong>no main, antes</strong> do trabalho começar.</li>
+<li>O dado que o handler usa está numa <strong>variável global</strong>.</li>
+<li>Arquivo só com <code>open</code>/<code>write</code>/<code>close</code> (o número vira texto com <code>snprintf</code>).</li>
+<li>Mostre o PID com <code>printf("%d\n", getpid())</code>.</li>
+<li>Teste com Ctrl+C e com <code>kill -INT &lt;pid&gt;</code> de outro terminal, e confira o arquivo com <code>cat</code>.</li>
+</ul></div>
+
+<h2 id="concorrencia">Sinais e concorrência: handlers aninhados</h2>
+<p>Um handler pode ser <strong>interrompido por outro handler</strong>. Exemplo: o handler de SIGINT está rodando, chega um SIGTERM e o handler de SIGTERM roda "por cima". Só depois que ele termina o de SIGINT continua. Já um handler <strong>não é interrompido pelo mesmo sinal</strong>: durante o handler de A, um novo A fica pendente (e vários A pendentes viram <strong>um só</strong>, porque sinais não são enfileirados).</p>
+<p>Isso gera race conditions quando dois handlers mexem na <strong>mesma variável global</strong>, chamam <code>printf</code> ou usam <code>errno</code>. No experimento <code>sinais-concorrentes.c</code> (SIGINT, SIGTERM, SIGINT enviados rapidamente), a variável <code>status</code> ficou inconsistente.</p>
+<div class="box trap"><span class="box-title">Erros conceituais dos slides</span>
+<ul>
+<li><strong>O main esperar informação vinda do handler</strong> (checar uma flag em vários lugares): errado. O handler deve ser <strong>autocontido</strong>.</li>
+<li><strong>O main tentar se sincronizar com o handler</strong> ("e se o código já passou deste ponto?"): errado. O handler pode ocorrer <strong>a qualquer momento</strong>.</li>
+</ul></div>
+
+<h2 id="bloqueio">Bloqueio de sinais com sa_mask</h2>
+<p>Um sinal bloqueado <strong>fica pendente</strong> e é entregue quando for desbloqueado. Bloquear é temporário e <strong>não descarta</strong> o sinal. Com <code>sa_mask</code>, os sinais da máscara ficam bloqueados <strong>enquanto aquele handler executa</strong>.</p>
+<pre data-lang="c"><code>// handler de SIGINT não pode ser interrompido por SIGTERM...
+struct sigaction s_int;
+s_int.sa_handler = handler_int;
+s_int.sa_flags = 0;
+sigemptyset(&amp;s_int.sa_mask);
+sigaddset(&amp;s_int.sa_mask, SIGTERM);      // bloqueia SIGTERM durante handler_int
+sigaction(SIGINT, &amp;s_int, NULL);
+
+// ...e o de SIGTERM não pode ser interrompido por SIGINT (corrige o outro lado)
+struct sigaction s_term;
+s_term.sa_handler = handler_term;
+s_term.sa_flags = 0;
+sigemptyset(&amp;s_term.sa_mask);
+sigaddset(&amp;s_term.sa_mask, SIGINT);
+sigaction(SIGTERM, &amp;s_term, NULL);</code></pre>
+<p>As funções de conjunto (<code>man sigsetops</code>) são <code>sigemptyset</code>, <code>sigfillset</code>, <code>sigaddset</code>, <code>sigdelset</code> e <code>sigismember</code>. Para bloquear fora de handlers, use <code>sigprocmask(SIG_BLOCK, &amp;set, NULL)</code>.</p>
+
+<h2 id="tstp">Ctrl+Z e SIGCONT</h2>
+<pre data-lang="c"><code>void handler_tstp(int s) {
+    printf("Vou parar!\n");
+    struct sigaction padrao;            // volta ao padrão (parar) e reenvia
+    padrao.sa_handler = SIG_DFL;
+    padrao.sa_flags = 0;
+    sigemptyset(&amp;padrao.sa_mask);
+    sigaction(SIGTSTP, &amp;padrao, NULL);
+    raise(SIGTSTP);
+}
+void handler_cont(int s) {
+    printf("Continuando!\n");
+    // re-registra o handler de SIGTSTP para a próxima vez
+    struct sigaction t;
+    t.sa_handler = handler_tstp;
+    t.sa_flags = 0;
+    sigemptyset(&amp;t.sa_mask);
+    sigaction(SIGTSTP, &amp;t, NULL);
+}</code></pre>
+
+<h2 id="interrompe">Sinais interrompem chamadas bloqueantes</h2>
+<p>Ao chegar um sinal capturado, as chamadas que bloqueiam o processo (<code>sleep</code>, <code>wait</code>, <code>read</code>, <code>write</code>) podem ser <strong>interrompidas</strong> e retornar antes da hora:</p>
+<ul>
+<li><code>sleep(n)</code> retorna o <strong>número de segundos que faltavam</strong> (0 se dormiu tudo). É assim que se verifica se ele dormiu o tempo todo (<code>man 3 sleep</code>, RETURN VALUE).</li>
+<li><code>read</code>/<code>wait</code> podem retornar -1 com <code>errno == EINTR</code>.</li>
+</ul>
+<pre data-lang="c"><code>unsigned int falta = 10;
+while (falta &gt; 0) falta = sleep(falta);   // dorme os 10 s mesmo recebendo sinais</code></pre>
+<p>No programa <code>sleep_longo.c</code>: com um handler de SIGTERM, o <code>sleep</code> é cortado e o programa segue. Sem handler, o SIGTERM simplesmente mata o processo.</p>
+
+<h2 id="wait">Revisão: o pai descobrindo o sinal do filho</h2>
+<pre data-lang="c"><code>pid_t f = fork();
+if (f == 0) {
+    int z = 0;
+    int x = 10 / z;      // SIGFPE no filho
+    return x;
+}
+int st;
+wait(&amp;st);
+printf("WIFEXITED=%d WIFSIGNALED=%d WTERMSIG=%d (%s)\n",
+       WIFEXITED(st), WIFSIGNALED(st), WTERMSIG(st), strsignal(WTERMSIG(st)));
+// WIFEXITED=0 WIFSIGNALED=1 WTERMSIG=8 (Floating point exception)</code></pre>
+
+<h2 id="resumo">Resumo relâmpago</h2>
+<ul>
+<li>Sinal é uma notificação assíncrona. As ações possíveis são ignorar, terminar, parar/continuar ou capturar com um handler.</li>
+<li><code>SIGKILL</code> e <code>SIGSTOP</code> não podem ser capturados nem ignorados. Ctrl+C gera SIGINT e Ctrl+Z gera SIGTSTP.</li>
+<li><code>kill(pid, sig)</code>, <code>raise(sig)</code>, <code>kill -s SIG pid</code>, <code>kill -l $?</code>.</li>
+<li>A receita do <code>sigaction</code>: <code>sa_handler</code> + <code>sigemptyset(&amp;sa_mask)</code> + <code>sa_flags = 0</code> + <code>sigaction(SIG, &amp;s, NULL)</code>.</li>
+<li>Para terminar "de verdade" pelo sinal: <code>SIG_DFL</code> + <code>raise</code>.</li>
+<li>Handlers aninham com sinais diferentes. Use <code>sigaddset(&amp;s.sa_mask, OUTRO)</code> para evitar a race.</li>
+<li>Includes: <code>&lt;signal.h&gt;</code>, <code>&lt;unistd.h&gt;</code>, <code>&lt;string.h&gt;</code> (para <code>strsignal</code>). Manuais: <code>man 7 signal</code>, <code>man 2 sigaction</code>, <code>man sigsetops</code>, <code>man 2 kill</code>.</li>
+</ul>
+</main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

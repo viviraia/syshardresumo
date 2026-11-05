@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Threads e Mutex — SisHard Resumo</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav id="sidebar"></nav>
+<main>
+<p class="kicker">Aulas 16 e 17 · <span class="badge af">cai na AF</span></p>
+<h1>Threads (pthreads) e Mutex</h1>
+<p class="lead">Como dividir o trabalho em partes que executam ao mesmo tempo dentro de <strong>um</strong> processo, passar argumentos, devolver resultados e proteger dados compartilhados.</p>
+<div id="page-toc" class="page-toc"></div>
+
+<h2 id="conceitos">Programação concorrente: por quê e o que é difícil</h2>
+<p>Programação concorrente é dividir um programa em várias tarefas que envolvem:</p>
+<ul>
+<li><strong>compartilhamento de recursos</strong>: as tarefas usam os mesmos dados (ex.: venda de ingressos limitados, onde não se pode vender o mesmo ingresso duas vezes);</li>
+<li><strong>sincronização</strong>: algumas tarefas dependem de outras (ex.: contar pessoas em várias fotos é independente por foto, mas a resposta final só sai quando todas acabarem).</li>
+</ul>
+<p>O desafio é que muita coisa acontece ao mesmo tempo e <strong>não dá para saber quem acontece primeiro</strong>.</p>
+<div class="table-wrap"><table>
+<tr><th></th><th>Processos</th><th>Threads</th></tr>
+<tr><td>Memória</td><td>Espaços de endereçamento <strong>separados</strong> (cópia no fork)</td><td><strong>Mesmo</strong> espaço de endereçamento: compartilham globais, heap e arquivos abertos</td></tr>
+<tr><td>Pilha</td><td>Uma por processo</td><td><strong>Cada thread tem a sua pilha</strong> (variáveis locais próprias)</td></tr>
+<tr><td>Custo</td><td>Mais caro de criar e destruir</td><td>Mais barato</td></tr>
+<tr><td>Comunicação</td><td>Via arquivos, pipes, sockets, sinais (pode ser distribuída em várias máquinas)</td><td>Direto pela memória, mas <strong>exige sincronização</strong></td></tr>
+<tr><td>Falha</td><td>Isolada</td><td>Um segfault derruba o processo inteiro</td></tr>
+</table></div>
+<p>A troca de contexto funciona igual nos dois casos, e as threads também são <strong>escalonadas pelo kernel</strong>: não controlamos a ordem em que elas rodam.</p>
+<p><strong>CPU-bound</strong> são tarefas limitadas pela CPU: rodam tão rápido quanto ela permite, fazem pouca E/S e se dividem em partes independentes com pouca sincronização (fork-join). <strong>IO-bound</strong> passam o tempo esperando disco ou rede, e threads ajudam a sobrepor essas esperas.</p>
+
+<h2 id="api">API pthreads: create e join</h2>
+<pre data-lang="c"><code>#include &lt;pthread.h&gt;
+// compile SEMPRE com -pthread:  gcc prog.c -o prog -pthread
+
+int pthread_create(pthread_t *tid,              // onde guardar o ID da nova thread
+                   const pthread_attr_t *attr,  // NULL = opções padrão
+                   void *(*func)(void *),       // função a executar
+                   void *arg);                  // argumento passado para func
+int pthread_join(pthread_t tid, void **retval); // espera tid acabar (retval pode ser NULL)
+
+// Toda função de thread tem ESTA assinatura:
+void *minha_thread(void *arg) {
+    printf("Hello thread!\n");
+    return NULL;
+}
+
+pthread_t tid;
+pthread_create(&amp;tid, NULL, minha_thread, NULL);
+pthread_join(tid, NULL);       // sincronização mais simples: espera o fim</code></pre>
+<div class="box trap"><span class="box-title">Sem join, a thread pode nem rodar</span>
+<p>Se o <code>main</code> chega ao <code>return 0</code>, o <strong>processo inteiro acaba</strong> e leva todas as threads junto. Sempre faça <code>pthread_join</code> em todas antes de sair. A ordem dos prints de várias threads <strong>muda a cada execução</strong>.</p>
+<p>Duas threads não podem fazer join na mesma thread: o resultado é indefinido (<code>man 3 pthread_join</code>).</p></div>
+<p><code>void *</code> é um endereço de memória sem tipo. Ele diz <em>onde</em> estão os dados, mas não <em>o que</em> são. Dentro da thread, faça o cast para o tipo certo.</p>
+
+<h2 id="args">Passando argumentos (sempre no heap!)</h2>
+<pre data-lang="c"><code>void *tarefa_print_i(void *arg) {
+    int *i = (int *) arg;          // reinterpreta o endereço como int*
+    printf("%d\n", *i);
+    return NULL;
+}
+
+int main() {
+    int *vi = malloc(sizeof(int) * 4);
+    pthread_t *tids = malloc(sizeof(pthread_t) * 4);
+    for (int i = 0; i &lt; 4; i++) {
+        vi[i] = i;
+        pthread_create(&amp;tids[i], NULL, tarefa_print_i, &amp;vi[i]);   // cada thread: SEU endereço
+    }
+    for (int i = 0; i &lt; 4; i++) pthread_join(tids[i], NULL);
+    free(vi);
+    free(tids);
+}</code></pre>
+<div class="box trap"><span class="box-title">Os dois bugs clássicos de escopo</span>
+<ol>
+<li><strong>Passar <code>&amp;i</code> do laço:</strong> todas as threads recebem o <em>mesmo endereço</em>, e o main continua alterando <code>i</code>. Quando a thread lê, o valor já mudou (podem sair "4 4 4 4" ou "1 3 3 4").</li>
+<li><strong>Passar o endereço de uma variável local de uma função que já retornou</strong> (ex.: <code>criar_threads</code> retorna os tids, mas as threads leem o <code>i</code> local dela). A pilha daquela função foi liberada ou reutilizada, e a thread lê lixo.</li>
+</ol>
+<p>A solução é cada thread receber <strong>um bloco próprio, alocado com <code>malloc</code></strong>, que vive até o fim (depois do join) e só então recebe <code>free</code>.</p></div>
+
+<h3 id="struct">Vários argumentos e retorno: struct</h3>
+<pre data-lang="c"><code>typedef struct {
+    int a, b;       // entradas
+    int res;        // saída: a thread preenche
+} t_arg;
+
+void *multiplica(void *_arg) {
+    t_arg *arg = _arg;             // cast implícito de void* em C
+    arg-&gt;res = arg-&gt;a * arg-&gt;b;
+    return NULL;
+}
+
+int main() {
+    int n = 4;
+    pthread_t *tids = malloc(sizeof(pthread_t) * n);
+    t_arg **args = malloc(sizeof(t_arg *) * n);
+    for (int i = 0; i &lt; n; i++) {
+        args[i] = malloc(sizeof(t_arg));
+        args[i]-&gt;a = i;
+        args[i]-&gt;b = 10;
+        pthread_create(&amp;tids[i], NULL, multiplica, args[i]);
+    }
+    for (int i = 0; i &lt; n; i++) {
+        pthread_join(tids[i], NULL);
+        printf("%d * %d = %d\n", args[i]-&gt;a, args[i]-&gt;b, args[i]-&gt;res);  // lê o resultado DEPOIS do join
+        free(args[i]);
+    }
+    free(args);
+    free(tids);
+    return 0;
+}</code></pre>
+<p>Retornar pela struct equivale a uma função que "retorna" escrevendo num ponteiro recebido. Também dá para retornar via <code>return ptr;</code> e pegar no <code>pthread_join(tid, &amp;ret)</code>, mas o padrão da disciplina é o campo na struct.</p>
+
+<h2 id="race">Race condition e região crítica</h2>
+<div class="box def"><span class="box-title">Definições</span>
+<p><strong>Race condition:</strong> a saída do programa <em>depende da ordem de execução</em> das threads. Em geral ocorre quando uma variável é usada por mais de uma thread e há pelo menos uma escrita, ou quando várias threads trabalham no mesmo arquivo.</p>
+<p><strong>Região crítica:</strong> parte do programa que só pode ser executada por <strong>uma thread por vez</strong>. Elimina a race, mas também a concorrência ali, e pode virar gargalo.</p></div>
+<p>Por que <code>soma = soma + v[i]</code> dá errado com várias threads? Porque são <strong>três passos</strong> (ler <code>soma</code> para um registrador, somar, escrever de volta). Entre o ler e o escrever, outra thread pode atualizar a <code>soma</code>, e uma das atualizações se perde. O resultado fica menor que o esperado e muda a cada execução.</p>
+
+<h2 id="mutex">Mutex (exclusão mútua)</h2>
+<ul>
+<li><strong>lock</strong>: se estiver destravado, trava e continua; se não, <strong>espera</strong> até alguém destravar.</li>
+<li><strong>unlock</strong>: se você tem a trava, destrava e permite que outra thread trave.</li>
+<li><strong>Não há garantia de ordem</strong>: qualquer thread que espera pode pegar a trava (em tese, uma pode esperar "para sempre").</li>
+</ul>
+<pre data-lang="c"><code>#include &lt;pthread.h&gt;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;   // cria e inicializa (ou pthread_mutex_init(&amp;m, NULL))
+
+pthread_mutex_lock(&amp;mutex);
+soma = soma + spa-&gt;vetor[i];        // REGIÃO CRÍTICA: só o mínimo necessário
+pthread_mutex_unlock(&amp;mutex);
+
+pthread_mutex_destroy(&amp;mutex);      // no fim (se usou pthread_mutex_init)</code></pre>
+<p>Crie o mutex <strong>no main, antes de criar as threads</strong>, e passe o <strong>endereço</strong> dele pela struct de argumentos (ou declare-o global).</p>
+
+<h3 id="custo">Mutex é caro: como economizar</h3>
+<p>Com lock/unlock a cada iteração, o programa fica <strong>correto, porém mais lento</strong> que a versão errada: perde-se o paralelismo e as operações de lock/unlock são custosas (meça com <code>time</code>). Há duas otimizações, e a segunda é a melhor:</p>
+<pre data-lang="c"><code>struct soma_parcial_args {
+    double *vetor;
+    int start, end;            // intervalo [start, end)
+    pthread_mutex_t *mutex;    // usado na versão 1
+    double resultado;          // usado na versão 2
+};
+double soma_total = 0;
+
+// 1) acumulador LOCAL por thread; um único lock no fim
+void *soma_parcial(void *_arg) {
+    struct soma_parcial_args *spa = _arg;
+    double local = 0;
+    for (int i = spa-&gt;start; i &lt; spa-&gt;end; i++) local += spa-&gt;vetor[i];
+    pthread_mutex_lock(spa-&gt;mutex);
+    soma_total += local;               // 1 lock por thread, não por elemento
+    pthread_mutex_unlock(spa-&gt;mutex);
+    return NULL;
+}
+
+// 2) SEM mutex: cada thread devolve sua parcial na struct; o main soma após o join
+void *soma_parcial2(void *_arg) {
+    struct soma_parcial_args *spa = _arg;
+    spa-&gt;resultado = 0;
+    for (int i = spa-&gt;start; i &lt; spa-&gt;end; i++) spa-&gt;resultado += spa-&gt;vetor[i];
+    return NULL;
+}
+// main:  for (...) { pthread_join(tids[i], NULL); total += args[i]-&gt;resultado; }  // sequencial: sem race</code></pre>
+<p><strong>Dividir o vetor:</strong> para N elementos e T threads, a thread <code>k</code> recebe <code>start = k*N/T</code> e <code>end = (k+1)*N/T</code>. Para o vetor todo, <code>start = 0</code> e <code>end = n</code>; para a primeira metade, <code>start = 0</code> e <code>end = n/2</code>.</p>
+
+<h2 id="valgrind">valgrind e memória (costuma valer pontos)</h2>
+<pre><code>gcc -g q4.c -o q4 -pthread
+valgrind --leak-check=full ./q4 2 arquivo.txt
+# objetivo: "All heap blocks were freed" e "ERROR SUMMARY: 0 errors"</code></pre>
+<ul>
+<li>Todo <code>malloc</code> e <code>realloc</code> precisa de um <code>free</code>: as structs de argumento, as strings lidas, o vetor de tids e o vetor de ponteiros.</li>
+<li>Faça os <code>free</code> <strong>depois</strong> do <code>pthread_join</code>, senão a thread pode acessar memória já liberada.</li>
+<li>Feche os fds e destrua os semáforos/mutex inicializados.</li>
+<li>"Invalid read" geralmente significa ler além do fim de um buffer (faltou espaço para o <code>'\0'</code>).</li>
+</ul>
+
+<h2 id="resumo">Resumo relâmpago</h2>
+<ul>
+<li>A função da thread é <code>void *f(void *arg)</code>; crie com <code>pthread_create(&amp;tid, NULL, f, arg)</code> e espere com <code>pthread_join(tid, NULL)</code>.</li>
+<li>Compile com <strong><code>-pthread</code></strong>.</li>
+<li>Cada thread recebe o seu próprio argumento <strong>no heap</strong> (struct). O resultado volta num campo da struct, lido depois do join.</li>
+<li>Variável compartilhada com escrita é race condition: proteja com <code>pthread_mutex_lock</code>/<code>unlock</code>, e só na região crítica.</li>
+<li>Mutex é caro: prefira acumuladores locais ou parciais devolvidas ao main.</li>
+<li>Manuais: <code>man 7 pthreads</code>, <code>man 3 pthread_create</code>, <code>man 3 pthread_join</code>, <code>man pthread_mutex_lock</code> (pacote <code>manpages-posix-dev</code>).</li>
+</ul>
+</main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

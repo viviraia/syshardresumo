@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cola para a prova — SisHard Resumo</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav id="sidebar"></nav>
+<main>
+<p class="kicker">Consulta rápida · <span class="badge af">AF</span></p>
+<h1>Cola para a prova</h1>
+<p class="lead">A AF é <strong>com consulta</strong> aos materiais (e sem IA). Deixe esta página aberta: tem os includes, as assinaturas, os modelos prontos para adaptar e os erros que mais tiram ponto.</p>
+<div id="page-toc" class="page-toc"></div>
+
+<h2 id="compilar">Compilar, rodar e testar</h2>
+<pre><code>gcc -Wall -g q1.c -o q1 -pthread           # threads/semáforos: -pthread
+gcc -Wall -g q2.c -o q2                    # processos
+valgrind --leak-check=full ./q4 2 arq.txt  # tem que dar "0 errors" e "All heap blocks were freed"
+./q3 &amp;                                     # roda em background e mostra o pid
+kill -s SIGINT &lt;pid&gt;   ;   kill -USR1 &lt;pid&gt;   ;   kill -9 &lt;pid&gt;
+echo $?  ;  kill -l $?                     # código de saída / sinal que matou
+time ./q4 2 arq.txt                        # mede tempo (confere o limite de threads)
+for i in $(seq 20); do ./q1 | tr -d '\n'; echo; done   # roda 20x para ver ordens diferentes
+man 2 fork | man 2 wait | man 3 execvp | man 2 open | man 2 read | man 7 signal | man 2 sigaction | man sem_overview | man 3 pthread_create</code></pre>
+
+<h2 id="includes">Includes por assunto</h2>
+<div class="table-wrap"><table>
+<tr><th>Assunto</th><th>Headers</th><th>Funções</th></tr>
+<tr><td>Básico</td><td><code>stdio.h stdlib.h string.h</code></td><td><code>printf snprintf malloc realloc free atoi atof atol strtol exit strlen strcmp strsignal</code></td></tr>
+<tr><td>Processos</td><td><code>unistd.h sys/types.h sys/wait.h</code></td><td><code>fork getpid getppid execvp wait waitpid sleep</code> · macros <code>WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG WNOHANG</code></td></tr>
+<tr><td>Arquivos</td><td><code>fcntl.h unistd.h sys/stat.h errno.h</code></td><td><code>open read write close lseek perror</code> · <code>O_RDONLY O_WRONLY O_RDWR O_CREAT O_TRUNC O_APPEND O_EXCL</code></td></tr>
+<tr><td>Sinais</td><td><code>signal.h</code></td><td><code>sigaction sigemptyset sigaddset kill raise</code> · <code>SIG_DFL SIG_IGN</code></td></tr>
+<tr><td>Threads</td><td><code>pthread.h</code></td><td><code>pthread_create pthread_join pthread_mutex_lock pthread_mutex_unlock PTHREAD_MUTEX_INITIALIZER</code></td></tr>
+<tr><td>Semáforos</td><td><code>semaphore.h</code></td><td><code>sem_init sem_wait sem_post sem_destroy</code></td></tr>
+<tr><td>Tempo/aleatório</td><td><code>time.h</code></td><td><code>time srand rand random</code></td></tr>
+</table></div>
+
+<h2 id="t-proc">Modelo: fork + execvp + waitpid (com retry)</h2>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/wait.h&gt;
+
+int main(int argc, char *argv[]) {
+    if (argc != 3) { printf("USO: %s &lt;a&gt; &lt;b&gt;\n", argv[0]); return 1; }
+    int ret = 1;
+    while (ret &gt; 0) {
+        pid_t filho = fork();
+        if (filho == 0) {
+            char *args[] = {"./programa", argv[1], argv[2], NULL};
+            execvp(args[0], args);
+            perror("execvp");
+            exit(1);
+        }
+        int wst;
+        waitpid(filho, &amp;wst, 0);
+        if (WIFEXITED(wst)) {
+            ret = (char) WEXITSTATUS(wst);      // (char) recupera retornos negativos
+            printf("retornou %d\n", ret);
+        } else if (WIFSIGNALED(wst)) {
+            printf("morreu com sinal %d (%s)\n", WTERMSIG(wst), strsignal(WTERMSIG(wst)));
+            ret = 1;                            // tenta de novo
+        }
+    }
+    return 0;
+}</code></pre>
+
+<h2 id="t-sinal">Modelo: handler que salva em arquivo e termina pelo sinal</h2>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;fcntl.h&gt;
+
+long estado = 0;                                  // global!
+
+void salva(void) {
+    int fd = open("estado.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) { perror("open"); return; }
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "%ld\n", estado);
+    write(fd, buf, n);
+    close(fd);
+}
+
+void handler(int sig) {
+    salva();
+    printf("salvo: %ld\n", estado);
+    struct sigaction d;                           // termina "de verdade" por SIGINT
+    d.sa_handler = SIG_DFL;
+    d.sa_flags = 0;
+    sigemptyset(&amp;d.sa_mask);
+    sigaction(SIGINT, &amp;d, NULL);
+    raise(SIGINT);
+}
+
+int main(void) {
+    printf("PID: %d\n", getpid());
+    struct sigaction s;
+    s.sa_handler = handler;
+    s.sa_flags = 0;
+    sigemptyset(&amp;s.sa_mask);
+    sigaddset(&amp;s.sa_mask, SIGTERM);               // opcional: bloqueia SIGTERM no handler
+    sigaction(SIGINT, &amp;s, NULL);
+    while (1) { estado++; usleep(1000); }
+}</code></pre>
+
+<h2 id="t-readline">Modelo: read_line com read (tamanho arbitrário)</h2>
+<pre data-lang="c"><code>char *read_line(int fd) {
+    int cap = 16, len = 0, lidos;
+    char *buf = malloc(cap);
+    char c;
+    while ((lidos = read(fd, &amp;c, 1)) &gt; 0) {
+        if (c == '\n') break;
+        if (len + 1 &gt;= cap) { cap *= 2; buf = realloc(buf, cap); }
+        buf[len++] = c;
+    }
+    if (lidos &lt;= 0 &amp;&amp; len == 0) { free(buf); return NULL; }
+    buf[len] = '\0';
+    return buf;
+}</code></pre>
+
+<h2 id="t-threads">Modelo: N threads, struct por thread, limite por semáforo e mutex</h2>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;semaphore.h&gt;
+
+typedef struct {
+    int id;
+    int entrada;
+    int res;                     // saída
+    sem_t *limite;
+    pthread_mutex_t *mutex;
+} t_arg;
+
+long total = 0;
+
+void *tarefa(void *_arg) {
+    t_arg *a = _arg;
+    sem_wait(a-&gt;limite);         // entra (no máx. K ao mesmo tempo)
+    a-&gt;res = a-&gt;entrada * 2;     // trabalho
+    sem_post(a-&gt;limite);         // sai
+    pthread_mutex_lock(a-&gt;mutex);
+    total += a-&gt;res;             // região crítica
+    pthread_mutex_unlock(a-&gt;mutex);
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
+    int n = 10, k = (argc &gt; 1) ? atoi(argv[1]) : 2;
+    sem_t limite;
+    sem_init(&amp;limite, 0, k);
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_t *tids = malloc(sizeof(pthread_t) * n);
+    t_arg **args = malloc(sizeof(t_arg *) * n);
+    for (int i = 0; i &lt; n; i++) {
+        args[i] = malloc(sizeof(t_arg));
+        args[i]-&gt;id = i;
+        args[i]-&gt;entrada = i;
+        args[i]-&gt;limite = &amp;limite;
+        args[i]-&gt;mutex = &amp;mutex;
+        pthread_create(&amp;tids[i], NULL, tarefa, args[i]);
+    }
+    for (int i = 0; i &lt; n; i++) {
+        pthread_join(tids[i], NULL);
+        printf("THREAD %02d RES %d\n", args[i]-&gt;id, args[i]-&gt;res);
+        free(args[i]);
+    }
+    printf("TOTAL: %ld\n", total);
+    free(args);
+    free(tids);
+    sem_destroy(&amp;limite);
+    return 0;
+}</code></pre>
+
+<h2 id="t-deps">Modelo: diagrama de dependências</h2>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;semaphore.h&gt;
+
+sem_t sA, sB;                                     // um por parte que tem setas saindo (init 0)
+
+void *t1(void *a) { printf("A\n"); sem_post(&amp;sA); sem_post(&amp;sA); return NULL; }  // A -&gt; C e A -&gt; D
+void *t2(void *a) { printf("B\n"); sem_post(&amp;sB); return NULL; }                 // B -&gt; C
+void *t3(void *a) { sem_wait(&amp;sA); sem_wait(&amp;sB); printf("C\n"); return NULL; }  // C depende de A e B
+void *t4(void *a) { sem_wait(&amp;sA); printf("D\n"); return NULL; }                 // D depende de A
+
+int main(void) {
+    sem_init(&amp;sA, 0, 0);
+    sem_init(&amp;sB, 0, 0);
+    void *(*f[4])(void *) = {t1, t2, t3, t4};
+    pthread_t tid[4];
+    for (int i = 0; i &lt; 4; i++) pthread_create(&amp;tid[i], NULL, f[i], NULL);
+    for (int i = 0; i &lt; 4; i++) pthread_join(tid[i], NULL);
+    sem_destroy(&amp;sA);
+    sem_destroy(&amp;sB);
+    return 0;
+}</code></pre>
+
+<h2 id="t-barreira">Modelo: barreira para N threads</h2>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;semaphore.h&gt;
+#define N 4
+
+int chegaram = 0;
+pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+sem_t barreira;                                   // init 0
+
+void *tarefa(void *a) {
+    printf("Antes da barreira\n");
+    pthread_mutex_lock(&amp;m);
+    chegaram++;
+    int ultimo = (chegaram == N);
+    pthread_mutex_unlock(&amp;m);
+    if (ultimo) { for (int i = 0; i &lt; N - 1; i++) sem_post(&amp;barreira); }
+    else sem_wait(&amp;barreira);
+    printf("Depois da barreira\n");
+    return NULL;
+}
+
+int main(void) {
+    sem_init(&amp;barreira, 0, 0);
+    pthread_t t[N];
+    for (int i = 0; i &lt; N; i++) pthread_create(&amp;t[i], NULL, tarefa, NULL);
+    for (int i = 0; i &lt; N; i++) pthread_join(t[i], NULL);
+    sem_destroy(&amp;barreira);
+    return 0;
+}</code></pre>
+
+<h2 id="erros">Erros que mais tiram ponto</h2>
+<div class="box trap"><span class="box-title">Processos</span>
+<ul>
+<li>Esquecer o <code>NULL</code> no fim do vetor do <code>execvp</code>, ou esquecer o <code>argv[0]</code>.</li>
+<li>Código depois do <code>execvp</code> sem <code>exit</code>: se o exec falhar, o filho continua o laço e cria mais processos.</li>
+<li>Ler <code>WEXITSTATUS</code> sem cast <code>(char)</code>, de modo que -1 vira 255.</li>
+<li>Usar <code>system()</code> quando é proibido.</li>
+<li>Não esperar os filhos (deixa zumbis e o pai sai antes).</li>
+</ul></div>
+<div class="box trap"><span class="box-title">Arquivos</span>
+<ul>
+<li>Usar <code>fopen</code>/<code>fprintf</code>/<code>fgets</code>/<code>getline</code> quando o enunciado pede só <code>open</code>/<code>read</code>/<code>write</code>.</li>
+<li>Esquecer o <code>O_CREAT</code> ou o mode (<code>0644</code>), ou o <code>O_TRUNC</code> (o arquivo fica com restos do conteúdo anterior).</li>
+<li>Escrever <code>sizeof(buf)</code> bytes em vez de <code>n</code>, o que grava lixo.</li>
+<li>Esquecer o <code>'\0'</code> depois do <code>read</code> antes de usar como string.</li>
+</ul></div>
+<div class="box trap"><span class="box-title">Sinais</span>
+<ul>
+<li>Registrar o handler depois do laço infinito: ele nunca é registrado.</li>
+<li>Assinatura do handler diferente de <code>void h(int)</code>.</li>
+<li>Esquecer o <code>sigemptyset(&amp;s.sa_mask)</code> e o <code>s.sa_flags = 0</code> (lixo na struct).</li>
+<li>O dado que o handler precisa não está numa global.</li>
+</ul></div>
+<div class="box trap"><span class="box-title">Threads e semáforos</span>
+<ul>
+<li>Compilar sem <code>-pthread</code>.</li>
+<li>Passar <code>&amp;i</code> do laço ou o endereço de uma local de função que já retornou.</li>
+<li>Não fazer join em todas: o main termina e mata as threads.</li>
+<li>Ler o resultado antes do join.</li>
+<li><code>free</code> antes do join, ou não liberar nada (o valgrind acusa).</li>
+<li>Usar <code>join</code> ou <code>sleep</code> para impor ordem (cria dependências extras, e a questão vale no máximo 50%).</li>
+<li>Semáforo de dependência iniciado em 1, ou poucos <code>post</code> para muitos dependentes, levando a deadlock.</li>
+<li><code>sem_wait</code> com o mutex travado, levando a deadlock.</li>
+<li>Mudar ou adicionar <code>printf</code> quando o enunciado proíbe, ou imprimir fora do formato exato (espaços e <code>\n</code> extras).</li>
+</ul></div>
+
+<h2 id="estrategia">Estratégia para as 3 horas</h2>
+<ol>
+<li>Leia o README inteiro e anote as <strong>rubricas em %</strong>: elas dizem o que priorizar.</li>
+<li>Comece pela questão que você domina mais. Mire primeiro nos itens de maior peso.</li>
+<li><strong>Entregue a cada questão terminada</strong>: o Blackboard aceita várias tentativas. Rezipe a pasta inteira e não renomeie os arquivos.</li>
+<li>Compile sempre com <code>-Wall</code> e teste com os programas de referência (<code>q2_ref</code>) quando houver.</li>
+<li>No fim, rode o valgrind e confira o formato exato da saída.</li>
+</ol>
+</main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

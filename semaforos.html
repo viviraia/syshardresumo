@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Semáforos e modelos de concorrência — SisHard Resumo</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav id="sidebar"></nav>
+<main>
+<p class="kicker">Aulas 18, 19 e 20 · <span class="badge af">cai na AF (Q1 é sempre isto)</span></p>
+<h1>Semáforos e modelos de concorrência</h1>
+<p class="lead">O mutex protege <em>dados</em>. O semáforo <strong>sincroniza o progresso</strong> das threads: "B só começa depois que A terminar", "no máximo 3 por vez", "espere todos chegarem".</p>
+<div id="page-toc" class="page-toc"></div>
+
+<h2 id="def">Definição</h2>
+<div class="box def"><span class="box-title">Semáforo</span>
+<p>Um <strong>inteiro especial que nunca fica negativo</strong>, manipulado só por duas operações <strong>atômicas</strong>:</p>
+<ul>
+<li><strong>POST</strong> (<code>sem_post</code>): <strong>aumenta 1</strong> e, se houver alguém esperando, acorda <strong>uma</strong> thread.</li>
+<li><strong>WAIT</strong> (<code>sem_wait</code>): se o valor for positivo, <strong>diminui 1</strong> e segue; se for 0, <strong>fica esperando</strong> até alguém fazer post.</li>
+</ul>
+<p>O valor representa quantas "permissões" ou "avisos" estão disponíveis.</p></div>
+<p><strong>Duas tarefas podem rodar em paralelo</strong> se (1) não compartilham nenhuma informação, ou (2) compartilham mas têm mecanismos de sincronização tais que <strong>toda ordem de execução possível</strong> leva ao mesmo resultado. Os semáforos servem para o caso (2).</p>
+<p>"Podem ser feitas em qualquer ordem" <strong>não</strong> quer dizer "em paralelo". Quer dizer que A inteira pode vir antes ou depois de B inteira, com o mesmo resultado.</p>
+
+<h2 id="api">API POSIX (unnamed semaphores)</h2>
+<pre data-lang="c"><code>#include &lt;semaphore.h&gt;
+
+int sem_init(sem_t *sem, int pshared, unsigned int valor); // pshared = 0: entre threads do mesmo processo
+int sem_wait(sem_t *sem);
+int sem_post(sem_t *sem);
+int sem_destroy(sem_t *sem);
+
+sem_t s;
+sem_init(&amp;s, 0, 0);     // valor inicial 0: "ainda não aconteceu"
+sem_post(&amp;s);
+sem_wait(&amp;s);
+sem_destroy(&amp;s);</code></pre>
+<ul>
+<li><strong>Unnamed</strong> (<code>sem_init</code>): ficam na memória do processo, usados entre threads. É o que usamos.</li>
+<li><strong>Named</strong> (<code>sem_open("/nome", ...)</code>): têm um nome global no sistema, usados entre processos diferentes.</li>
+<li>O semáforo precisa ser <strong>compartilhado</strong> pelas threads: global, ou passe <code>sem_t *</code> pela struct de argumentos. <strong>Nunca passe uma cópia</strong> (<code>sem_t</code> por valor).</li>
+<li>Veja <code>man sem_overview</code>.</li>
+</ul>
+
+<h2 id="rdv">Rendez-vous (encontro de duas threads)</h2>
+<div class="diagram">
+<svg viewBox="0 0 420 200" width="420" role="img" aria-label="thread1 faz A e depois C; thread2 faz B e depois D; C e D só começam após A e B">
+<defs><marker id="ah" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" class="arrowhead"/></marker></defs>
+<text x="20" y="40" class="lane-label">thread1</text><text x="20" y="150" class="lane-label">thread2</text>
+<line x1="90" y1="35" x2="400" y2="35" class="lane"/><line x1="90" y1="145" x2="400" y2="145" class="lane"/>
+<line x1="245" y1="10" x2="245" y2="190" class="edge" stroke-dasharray="6 4"/>
+<text x="210" y="100" font-size="12">RDV</text>
+<rect x="120" y="15" width="60" height="40" rx="8" class="node"/><text x="143" y="41" font-size="16">A</text>
+<rect x="300" y="15" width="60" height="40" rx="8" class="node"/><text x="323" y="41" font-size="16">C</text>
+<rect x="120" y="125" width="60" height="40" rx="8" class="node"/><text x="143" y="151" font-size="16">B</text>
+<rect x="300" y="125" width="60" height="40" rx="8" class="node"/><text x="323" y="151" font-size="16">D</text>
+</svg>
+</div>
+<p>A e B podem ocorrer em qualquer ordem, mas <strong>ambas antes</strong> de C e D. As ordens válidas são <code>ABCD</code>, <code>ABDC</code>, <code>BACD</code> e <code>BADC</code>; qualquer ordem com C ou D antes de A ou B é inválida (ex.: <code>ACBD</code>).</p>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;semaphore.h&gt;
+
+typedef struct { sem_t *s1, *s2; } t_arg;
+
+void *thread1(void *_arg) {
+    t_arg *arg = _arg;
+    printf("A\n");
+    sem_post(arg-&gt;s1);   // "thread1 chegou"
+    sem_wait(arg-&gt;s2);   // espera "thread2 chegou"
+    printf("C\n");
+    return NULL;
+}
+void *thread2(void *_arg) {
+    t_arg *arg = _arg;
+    printf("B\n");
+    sem_post(arg-&gt;s2);   // "thread2 chegou"
+    sem_wait(arg-&gt;s1);   // espera "thread1 chegou"
+    printf("D\n");
+    return NULL;
+}
+int main() {
+    pthread_t tid[2];
+    sem_t s1, s2;
+    sem_init(&amp;s1, 0, 0);
+    sem_init(&amp;s2, 0, 0);
+    t_arg arg = { &amp;s1, &amp;s2 };          // pode ficar na pilha do main: o main espera o join
+    pthread_create(&amp;tid[0], NULL, thread1, &amp;arg);
+    pthread_create(&amp;tid[1], NULL, thread2, &amp;arg);
+    pthread_join(tid[0], NULL);
+    pthread_join(tid[1], NULL);
+    sem_destroy(&amp;s1);
+    sem_destroy(&amp;s2);
+    return 0;
+}</code></pre>
+<div class="box trap"><span class="box-title">Perguntas que caem</span>
+<ul>
+<li><strong>Iniciar os semáforos com 1?</strong> Não: quem espera por ele passaria direto, sem o outro ter chegado.</li>
+<li><strong>Inverter para <code>wait</code> antes do <code>post</code>?</strong>
+<ul>
+<li>Em <em>uma</em> thread só, ainda funciona, mas impõe uma ordem fixa (uma sempre espera a outra).</li>
+<li>Nas <em>duas</em>, dá <strong>deadlock</strong>: cada uma espera um aviso que a outra nunca envia.</li>
+</ul></li>
+</ul></div>
+
+<h2 id="receita">Receita: do diagrama de dependências aos semáforos</h2>
+<p>A <strong>Q1 da AF</strong> mostra uma figura com as partes de 4 ou 5 threads e setas de dependência ("D só pode começar depois de A e B"). Vale 40% criar as threads e 60% sincronizar sem criar dependências novas (se criar, a questão vale no máximo 50%).</p>
+<div class="box exam"><span class="box-title">Algoritmo infalível</span>
+<ol>
+<li>Liste cada seta <strong>X → Y</strong> ("Y depende de X").</li>
+<li>Para cada parte X que tem setas saindo, crie um semáforo <code>sX</code> <strong>iniciado em 0</strong>.</li>
+<li>Logo <strong>depois</strong> do <code>printf("X")</code>, faça <code>sem_post(&amp;sX)</code> <strong>uma vez para cada seta que sai de X</strong>.</li>
+<li>Logo <strong>antes</strong> do <code>printf("Y")</code>, faça <code>sem_wait(&amp;sX)</code> para <strong>cada</strong> X de que Y depende.</li>
+<li>As dependências <strong>dentro da mesma thread</strong> (A antes de E na thread1) já são garantidas pela ordem do código: não precisam de semáforo.</li>
+<li>Crie as threads num laço (vetor de ponteiros para função) e faça join em todas.</li>
+</ol>
+<p><strong>Por que um post por seta?</strong> Se A libera B e D, e A desse um post só, apenas um deles passaria. Com dois posts no mesmo <code>sA</code>, cada um consome um. Alternativa equivalente: semáforos separados <code>sA_B</code> e <code>sA_D</code>.</p></div>
+<pre data-lang="c"><code>// Exemplo: A -&gt; C, B -&gt; C, C -&gt; D   (A na t1, B na t2, C e D na t3)
+sem_t sA, sB;           // globais; no main: sem_init(&amp;sA, 0, 0); sem_init(&amp;sB, 0, 0);
+
+void *t1(void *a) { printf("A\n"); sem_post(&amp;sA); return NULL; }
+void *t2(void *a) { printf("B\n"); sem_post(&amp;sB); return NULL; }
+void *t3(void *a) {
+    sem_wait(&amp;sA);          // C depende de A
+    sem_wait(&amp;sB);          // C depende de B
+    printf("C\n");
+    printf("D\n");          // D depois de C: mesma thread, já é garantido
+    return NULL;
+}
+
+// criando em laço:
+void *(*funcs[3])(void *) = {t1, t2, t3};
+pthread_t tids[3];
+for (int i = 0; i &lt; 3; i++) pthread_create(&amp;tids[i], NULL, funcs[i], NULL);
+for (int i = 0; i &lt; 3; i++) pthread_join(tids[i], NULL);</code></pre>
+<div class="box trap"><span class="box-title">Como perder pontos</span>
+<ul>
+<li>Usar <code>pthread_join</code> no meio para impor ordem: isso cria dependências extras e serializa tudo.</li>
+<li>Usar <code>sleep</code> para "acertar" a ordem: não é sincronização.</li>
+<li>Pôr o <code>sem_post</code> antes do <code>printf</code> da parte, liberando cedo demais.</li>
+<li>Fazer <code>wait</code> num semáforo que ninguém posta, ou postar menos vezes que o número de dependentes: <strong>deadlock</strong>.</li>
+<li>Alterar ou adicionar <code>printf</code>s (é proibido no enunciado).</li>
+</ul></div>
+
+<h2 id="barreira">Barreira (generalização do RDV para N threads)</h2>
+<p>N threads rodando o mesmo código precisam esperar todas chegarem antes de qualquer uma imprimir "Depois da barreira". Usam-se três coisas:</p>
+<ul>
+<li>um contador compartilhado <code>num_barrier</code>, que <strong>precisa de mutex</strong> por ser compartilhado e escrito;</li>
+<li>um semáforo <code>sem_barrier</code> iniciado em 0;</li>
+<li>a regra de que a última thread a chegar faz <strong>N−1 posts</strong>, porque cada <code>sem_post</code> libera exatamente uma thread que está no <code>sem_wait</code>.</li>
+</ul>
+<pre data-lang="c"><code>typedef struct {
+    int n;                       // total de threads
+    int *num_barrier;            // quantas já chegaram
+    pthread_mutex_t *mutex;
+    sem_t *sem_barrier;
+} t_bar;
+
+void *tarefa(void *_arg) {
+    t_bar *b = _arg;
+    printf("Antes da barreira\n");
+
+    pthread_mutex_lock(b-&gt;mutex);
+    (*b-&gt;num_barrier)++;
+    int ultimo = (*b-&gt;num_barrier == b-&gt;n);
+    pthread_mutex_unlock(b-&gt;mutex);
+
+    if (ultimo) {
+        for (int i = 0; i &lt; b-&gt;n - 1; i++) sem_post(b-&gt;sem_barrier);  // libera as outras N-1
+    } else {
+        sem_wait(b-&gt;sem_barrier);                                     // espera a última
+    }
+
+    printf("Depois da barreira\n");
+    return NULL;
+}</code></pre>
+<p>Outra forma: <strong>todas</strong> fazem <code>sem_wait</code> e a última posta N vezes (incluindo ela mesma). Também é válido.</p>
+
+<h2 id="limitar">Limitar a MAX threads executando ao mesmo tempo</h2>
+<p>É um semáforo <strong>iniciado com MAX</strong> (o número de "vagas"). Cada thread faz <code>sem_wait</code> para entrar e <code>sem_post</code> para sair. Criam-se todas as threads, mas só MAX passam do wait por vez. Este é o "respeitar a quantidade máxima de threads" da Q4 do simulado (30%).</p>
+<pre data-lang="c"><code>#define N   10
+#define MAX 2
+typedef struct { sem_t *sem; } arg_thread_t;
+
+void *faz_algo(void *arg_) {
+    arg_thread_t *arg = arg_;
+    sem_wait(arg-&gt;sem);            // pede uma vaga (bloqueia se já há MAX rodando)
+    printf("Thread executando!\n");
+    trabalho_pesado();
+    printf("Thread vai finalizar!\n");
+    sem_post(arg-&gt;sem);            // devolve a vaga
+    return NULL;
+}
+
+int main() {
+    sem_t semaph;
+    sem_init(&amp;semaph, 0, MAX);     // MAX vagas
+    arg_thread_t *arg = malloc(sizeof(arg_thread_t));
+    arg-&gt;sem = &amp;semaph;
+    pthread_t *tid = malloc(sizeof(pthread_t) * N);
+    for (int i = 0; i &lt; N; i++) pthread_create(&amp;tid[i], NULL, faz_algo, arg);
+    for (int i = 0; i &lt; N; i++) pthread_join(tid[i], NULL);
+    sem_destroy(&amp;semaph);
+    free(tid);
+    free(arg);
+}</code></pre>
+<p>Para conferir, com MAX = 2 e 6 tarefas de 1 s, o <code>time</code> deve dar cerca de 3 s; com MAX = 6, cerca de 1 s.</p>
+
+<h2 id="prodcons">Produtor-consumidor (buffer circular)</h2>
+<p>Produtores geram itens e consumidores os processam, compartilhando um <strong>buffer limitado</strong> de tamanho T, implementado como <strong>fila circular</strong> (índices que voltam a 0 com <code>% T</code>). São três sincronizações:</p>
+<ul>
+<li><code>vazias</code>, iniciado em <strong>T</strong>: o produtor faz <code>wait</code> (espera se o buffer está cheio) e o consumidor faz <code>post</code> depois de retirar;</li>
+<li><code>cheias</code>, iniciado em <strong>0</strong>: o consumidor faz <code>wait</code> (espera se o buffer está vazio) e o produtor faz <code>post</code> depois de inserir;</li>
+<li>um <code>mutex</code> para proteger os índices e o buffer quando há vários produtores ou consumidores.</li>
+</ul>
+<pre data-lang="c"><code>#define T 5
+int buffer[T];
+int ini = 0, fim = 0;                 // consome em ini, produz em fim
+sem_t vazias, cheias;                 // sem_init(&amp;vazias,0,T); sem_init(&amp;cheias,0,0);
+pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+
+void *produtor(void *a) {
+    while (1) {
+        int item = rand() % 100;
+        sleep(rand() % 3);
+        sem_wait(&amp;vazias);            // há espaço?
+        pthread_mutex_lock(&amp;m);
+        buffer[fim] = item;
+        fim = (fim + 1) % T;
+        pthread_mutex_unlock(&amp;m);
+        sem_post(&amp;cheias);            // avisa: +1 item
+    }
+}
+void *consumidor(void *a) {
+    while (1) {
+        sem_wait(&amp;cheias);            // há item?
+        pthread_mutex_lock(&amp;m);
+        int item = buffer[ini];
+        ini = (ini + 1) % T;
+        pthread_mutex_unlock(&amp;m);
+        sem_post(&amp;vazias);            // avisa: +1 espaço
+        printf("consumi %d\n", item);
+        sleep(rand() % 3);
+    }
+}</code></pre>
+<div class="box trap"><span class="box-title">A ordem importa</span>
+<p>Faça <code>sem_wait</code> <strong>antes</strong> do <code>mutex_lock</code>. Se travar o mutex e depois esperar pelo semáforo, você dorme segurando a trava e o outro lado nunca consegue postar: <strong>deadlock</strong>.</p></div>
+<p>A versão com <strong>M produtores e N consumidores</strong> usa o mesmo código, só criando mais threads (por isso o mutex é obrigatório). O plano de aula também cita o problema de <em>leitores-escritores</em>: vários leitores podem ler juntos, mas o escritor precisa de exclusividade, com um contador de leitores protegido por mutex e um semáforo de "sala vazia".</p>
+
+<h2 id="mutexvssem">Mutex x Semáforo</h2>
+<div class="table-wrap"><table>
+<tr><th></th><th>Mutex</th><th>Semáforo</th></tr>
+<tr><td>Objetivo</td><td>Proteger um dado compartilhado (exclusão mútua)</td><td>Sincronizar o progresso, contar recursos e vagas</td></tr>
+<tr><td>Valores</td><td>Travado ou destravado</td><td>Inteiro ≥ 0</td></tr>
+<tr><td>Quem libera</td><td>Só quem travou faz unlock</td><td>Qualquer thread pode dar post</td></tr>
+<tr><td>Uso típico</td><td><code>soma += x</code>, contador de barreira</td><td>RDV, dependências, limite de N, produtor-consumidor</td></tr>
+<tr><td>API</td><td><code>pthread_mutex_lock/unlock</code></td><td><code>sem_wait/sem_post</code></td></tr>
+</table></div>
+<p>Um semáforo iniciado em 1 (binário) funciona como mutex, mas na prova use o mutex para dados e o semáforo para ordem e vagas.</p>
+
+<h2 id="resumo">Resumo relâmpago</h2>
+<ul>
+<li><code>sem_init(&amp;s, 0, v)</code>: v = 0 para "evento ainda não ocorreu"; v = MAX para "MAX vagas".</li>
+<li>Para dependências: <code>post</code> depois da parte, um por dependente; <code>wait</code> antes da parte, um por dependência.</li>
+<li>RDV: post do seu e wait do outro. Inverter nas duas threads causa deadlock.</li>
+<li>Barreira: contador + mutex + N−1 posts da última thread.</li>
+<li>Produtor-consumidor: <code>vazias = T</code>, <code>cheias = 0</code>, mutex; <code>wait</code> antes do <code>lock</code>.</li>
+<li>Include <code>&lt;semaphore.h&gt;</code> e compilar com <code>-pthread</code>.</li>
+</ul>
+</main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prova modelo — SisHard Resumo</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav id="sidebar"></nav>
+<main>
+<p class="kicker">Treino · formato da AF</p>
+<h1>Prova Final modelo</h1>
+<p class="lead">Quatro questões práticas <strong>inéditas</strong> no mesmo formato do simulado oficial (2,5 pontos cada, 3 horas), mais um <a href="#quiz">quiz objetivo</a> com correção automática para fixar a teoria.</p>
+
+<div class="timer-bar" id="timer">
+<span class="clock">3:00:00</span>
+<span class="label">Cronômetro da prova (3h). Ele continua contando se você recarregar a página.</span>
+<button class="btn primary" data-act="start" type="button">▶ iniciar prova</button>
+<button class="btn" data-act="reset" type="button">↺ zerar</button>
+</div>
+
+<div id="page-toc" class="page-toc"></div>
+
+<h2 id="regras">Regras (iguais às da AF)</h2>
+<ol>
+<li>A prova é individual. É permitido consultar todo o material de aula, suas soluções e os labs (e este site 😉). Não é permitido consultar pessoas nem usar IA.</li>
+<li>Duração: <strong>três horas</strong>.</li>
+<li>Cada questão tem um arquivo próprio para a solução, cujo nome não deve ser alterado. Na prova real, rezipe a pasta inteira e entregue no Blackboard a cada questão terminada.</li>
+<li>Os arquivos-base ficam na pasta <code>prova/</code> deste site: há um botão de download em cada questão. Você também pode clonar o repositório e trabalhar direto na pasta <code>prova/</code>.</li>
+<li>Tente resolver <strong>antes</strong> de abrir o gabarito. Corrija pela rubrica e some sua nota.</li>
+</ol>
+<pre><code># preparar o ambiente (Linux / Ubuntu 22.04)
+cd prova
+gcc -Wall instavel.c -o instavel      # programa auxiliar da Q2</code></pre>
+
+<!-- ============================================================ Q1 -->
+<section class="question" id="q1">
+<h3>Questão 1 — Semáforos <span class="pts">2,5 pontos</span></h3>
+<p>O arquivo <code>q1.c</code> tem 5 funções de thread. As partes de cada uma (os <code>printf</code> de uma letra) têm as relações de dependência da figura: uma seta <strong>X → Y</strong> significa que <strong>Y só pode ser impresso depois de X</strong>. As partes de uma mesma thread executam na ordem do código.</p>
+<div class="diagram">
+<svg viewBox="0 0 560 360" width="560" role="img" aria-label="Diagrama de dependências da questão 1">
+<defs><marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" class="arrowhead"/></marker></defs>
+<text x="8" y="45" class="lane-label">thread1</text>
+<text x="8" y="115" class="lane-label">thread2</text>
+<text x="8" y="185" class="lane-label">thread3</text>
+<text x="8" y="255" class="lane-label">thread4</text>
+<text x="8" y="325" class="lane-label">thread5</text>
+<line x1="80" y1="40" x2="540" y2="40" class="lane"/>
+<line x1="80" y1="110" x2="540" y2="110" class="lane"/>
+<line x1="80" y1="180" x2="540" y2="180" class="lane"/>
+<line x1="80" y1="250" x2="540" y2="250" class="lane"/>
+<line x1="80" y1="320" x2="540" y2="320" class="lane"/>
+<line x1="145" y1="40" x2="214" y2="106" class="edge" marker-end="url(#arr)"/>
+<line x1="145" y1="44" x2="216" y2="244" class="edge" marker-end="url(#arr)"/>
+<line x1="265" y1="106" x2="334" y2="46" class="edge" marker-end="url(#arr)"/>
+<path d="M145,180 C300,180 360,130 360,60" class="edge" marker-end="url(#arr)"/>
+<line x1="265" y1="246" x2="334" y2="186" class="edge" marker-end="url(#arr)"/>
+<line x1="385" y1="46" x2="456" y2="312" class="edge" marker-end="url(#arr)"/>
+<line x1="385" y1="186" x2="456" y2="314" class="edge" marker-end="url(#arr)"/>
+<rect x="95" y="23" width="50" height="34" rx="8" class="node"/><text x="113" y="46" font-size="16">A</text>
+<rect x="335" y="23" width="50" height="34" rx="8" class="node"/><text x="353" y="46" font-size="16">E</text>
+<rect x="215" y="93" width="50" height="34" rx="8" class="node"/><text x="233" y="116" font-size="16">B</text>
+<rect x="95" y="163" width="50" height="34" rx="8" class="node"/><text x="113" y="186" font-size="16">C</text>
+<rect x="335" y="163" width="50" height="34" rx="8" class="node"/><text x="353" y="186" font-size="16">F</text>
+<rect x="215" y="233" width="50" height="34" rx="8" class="node"/><text x="233" y="256" font-size="16">D</text>
+<rect x="455" y="303" width="50" height="34" rx="8" class="node"/><text x="473" y="326" font-size="16">G</text>
+</svg>
+</div>
+<p>Em texto: <strong>A → B</strong>, <strong>A → D</strong>, <strong>B → E</strong>, <strong>C → E</strong>, <strong>D → F</strong>, <strong>E → G</strong>, <strong>F → G</strong>. Pela ordem do código, A vem antes de E (thread1) e C antes de F (thread3).</p>
+<p>Seu trabalho:</p>
+<ol>
+<li>criar as 5 threads <strong>em um laço</strong> para execução concorrente e esperar todas (<strong>40%</strong>);</li>
+<li>usar <strong>semáforos</strong> para que a ordem dos prints respeite a figura (<strong>60%</strong>).</li>
+</ol>
+<p><strong>OBS:</strong></p>
+<ul>
+<li>Não introduza novas dependências: se o programa impuser relações além das da figura, a questão vale no máximo 50%.</li>
+<li>Não altere os <code>printf</code> existentes nem adicione novos.</li>
+<li>Compile com <code>gcc -Wall -g q1.c -o q1 -pthread</code>.</li>
+</ul>
+<div class="files"><a class="btn small" href="prova/q1.c" download>⬇ q1.c (base)</a></div>
+<details class="answer"><summary>Ver gabarito comentado da Q1</summary><div class="details-body">
+<p><strong>Ideia:</strong> um semáforo iniciado em 0 para cada parte que tem setas saindo (A, B, C, D, E, F). Depois de imprimir X, faça um <code>sem_post(sX)</code> <strong>por seta que sai de X</strong>; antes de imprimir Y, faça um <code>sem_wait</code> em cada semáforo de que Y depende. A sai com duas setas, então recebe <strong>dois posts</strong> (B e D consomem um cada).</p>
+<p><strong>Ordens válidas</strong> (de 300 execuções do gabarito): <code>ACBDEFG</code>, <code>CADBFEG</code>, <code>ADCFBEG</code>… <strong>Inválidas:</strong> <code>BACDEFG</code> (B antes de A) e <code>ACBDEGF</code> (G antes de F).</p>
+<pre data-lang="c" data-src="prova/gabarito/q1.c"><code>// GABARITO - Prova Modelo SisHard - Questao 1
+// Compile: gcc -Wall -g q1.c -o q1 -pthread
+//
+// Dependencias do diagrama:
+//   A -&gt; B     A -&gt; D
+//   B -&gt; E     C -&gt; E
+//   D -&gt; F
+//   E -&gt; G     F -&gt; G
+//
+// Regra: um semaforo (iniciado em 0) por "aresta de saida" de cada parte.
+// Quem termina a parte X faz sem_post(sX) uma vez para CADA parte que depende dela.
+// Quem depende de X faz sem_wait(sX) antes de executar.
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;semaphore.h&gt;
+
+typedef struct {
+    sem_t sA, sB, sC, sD, sE, sF;
+} t_arg;
+
+void *thread1(void *_arg) {
+    t_arg *arg = _arg;
+    printf("A\n");
+    sem_post(&amp;arg-&gt;sA);   // libera B
+    sem_post(&amp;arg-&gt;sA);   // libera D
+
+    sem_wait(&amp;arg-&gt;sB);   // E depende de B
+    sem_wait(&amp;arg-&gt;sC);   // E depende de C
+    printf("E\n");
+    sem_post(&amp;arg-&gt;sE);   // libera G
+    return NULL;
+}
+
+void *thread2(void *_arg) {
+    t_arg *arg = _arg;
+    sem_wait(&amp;arg-&gt;sA);   // B depende de A
+    printf("B\n");
+    sem_post(&amp;arg-&gt;sB);
+    return NULL;
+}
+
+void *thread3(void *_arg) {
+    t_arg *arg = _arg;
+    printf("C\n");        // C nao depende de ninguem
+    sem_post(&amp;arg-&gt;sC);
+
+    sem_wait(&amp;arg-&gt;sD);   // F depende de D
+    printf("F\n");
+    sem_post(&amp;arg-&gt;sF);
+    return NULL;
+}
+
+void *thread4(void *_arg) {
+    t_arg *arg = _arg;
+    sem_wait(&amp;arg-&gt;sA);   // D depende de A
+    printf("D\n");
+    sem_post(&amp;arg-&gt;sD);
+    return NULL;
+}
+
+void *thread5(void *_arg) {
+    t_arg *arg = _arg;
+    sem_wait(&amp;arg-&gt;sE);   // G depende de E
+    sem_wait(&amp;arg-&gt;sF);   // G depende de F
+    printf("G\n");
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
+    void *(*funcs[5])(void *) = {thread1, thread2, thread3, thread4, thread5};
+    pthread_t tids[5];
+
+    t_arg *arg = malloc(sizeof(t_arg));
+    sem_init(&amp;arg-&gt;sA, 0, 0);
+    sem_init(&amp;arg-&gt;sB, 0, 0);
+    sem_init(&amp;arg-&gt;sC, 0, 0);
+    sem_init(&amp;arg-&gt;sD, 0, 0);
+    sem_init(&amp;arg-&gt;sE, 0, 0);
+    sem_init(&amp;arg-&gt;sF, 0, 0);
+
+    for (int i = 0; i &lt; 5; i++) {
+        pthread_create(&amp;tids[i], NULL, funcs[i], arg);
+    }
+    for (int i = 0; i &lt; 5; i++) {
+        pthread_join(tids[i], NULL);
+    }
+
+    sem_destroy(&amp;arg-&gt;sA);
+    sem_destroy(&amp;arg-&gt;sB);
+    sem_destroy(&amp;arg-&gt;sC);
+    sem_destroy(&amp;arg-&gt;sD);
+    sem_destroy(&amp;arg-&gt;sE);
+    sem_destroy(&amp;arg-&gt;sF);
+    free(arg);
+    return 0;
+}</code></pre>
+<p><strong>Como testar:</strong> <code>for i in $(seq 50); do ./q1 | tr -d '\n'; echo; done | sort | uniq -c</code>. Várias ordens diferentes devem aparecer, todas válidas. Se sair sempre a mesma ordem, desconfie de dependência extra.</p>
+</div></details>
+</section>
+
+<!-- ============================================================ Q2 -->
+<section class="question" id="q2">
+<h3>Questão 2 — Processos <span class="pts">2,5 pontos</span></h3>
+<p>O programa <code>instavel</code> (fonte em <code>instavel.c</code>; compile-o, mas <strong>não</strong> o altere) processa uma tarefa, mas é instável. Ele é chamado como <code>./instavel &lt;tarefa&gt; &lt;n&gt;</code> e:</p>
+<ul>
+<li>retorna <strong>-1</strong> se a quantidade de argumentos estiver errada ou se <code>n</code> for negativo;</li>
+<li>retorna <strong>0</strong> quando a tarefa é processada com sucesso;</li>
+<li>retorna <strong>1, 2 ou 3</strong> em falha temporária;</li>
+<li>às vezes <strong>trava e morre com um sinal</strong> (SIGABRT).</li>
+</ul>
+<p>Escreva <code>q2</code> (arquivo <code>q2.c</code>), chamado como <code>./q2 &lt;tarefa&gt; &lt;n&gt;</code>, que <strong>executa <code>./instavel</code> repetidamente, cada vez num processo filho</strong>, até que ele dê certo ou indique erro de parâmetro. A cada tentativa, imprima <strong>exatamente</strong>:</p>
+<pre><code>Tentativa &lt;k&gt;: instavel retornou &lt;ret&gt;                 (terminou normalmente)
+Tentativa &lt;k&gt;: instavel terminou com o sinal &lt;s&gt; (&lt;nome&gt;) (morreu por sinal)
+SUCESSO apos &lt;k&gt; tentativa(s)                           (quando ret == 0)
+ERRO: parametros invalidos, desistindo                  (quando ret &lt; 0)</code></pre>
+<p>Rubrica:</p>
+<ul>
+<li><strong>30%</strong>: <code>fork</code> + <code>execvp</code> com os argumentos corretos (o filho repassa <code>argv[1]</code> e <code>argv[2]</code>);</li>
+<li><strong>40%</strong>: o pai espera, lê o retorno corretamente (<strong>inclusive o -1</strong>), repete nas falhas 1–3 e para em 0 ou em -1;</li>
+<li><strong>20%</strong>: detecta o término por sinal e mostra o número e o nome (<code>strsignal</code>), tentando de novo;</li>
+<li><strong>10%</strong>: formato exato da saída e contagem das tentativas.</li>
+</ul>
+<p><strong>Não pode usar <code>system</code>.</strong> Compile com <code>gcc -Wall -g q2.c -o q2</code>. Teste com <code>./q2 tarefa 7</code> e com <code>./q2 tarefa -3</code>.</p>
+<div class="files"><a class="btn small" href="prova/q2.c" download>⬇ q2.c (base)</a><a class="btn small" href="prova/instavel.c" download>⬇ instavel.c</a></div>
+<details class="answer"><summary>Ver gabarito comentado da Q2</summary><div class="details-body">
+<p><strong>Pontos-chave:</strong></p>
+<ul>
+<li>o vetor do exec começa com o nome do programa e termina com <code>NULL</code>;</li>
+<li>o <code>perror</code> + <code>exit</code> depois do <code>execvp</code> evita que o filho continue o laço se o exec falhar;</li>
+<li><code>(char) WEXITSTATUS</code> transforma o 255 em -1;</li>
+<li><code>WIFSIGNALED</code> trata o <code>abort()</code>.</li>
+</ul>
+<pre data-lang="c" data-src="prova/gabarito/q2.c"><code>// GABARITO - Prova Modelo SisHard - Questao 2
+// Compile: gcc -Wall -g q2.c -o q2
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;string.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/wait.h&gt;
+
+int main(int argc, char *argv[]) {
+    if (argc != 3) {
+        printf("USO: ./q2 &lt;tarefa&gt; &lt;n&gt;\n");
+        return 1;
+    }
+
+    int tentativa = 0;
+    int continuar = 1;
+
+    while (continuar) {
+        tentativa++;
+
+        pid_t filho = fork();
+        if (filho == 0) {
+            // FILHO: vira o programa instavel.
+            // argv sempre comeca com o nome do programa e termina com NULL
+            char *args[] = {"./instavel", argv[1], argv[2], NULL};
+            execvp(args[0], args);
+            // so chega aqui se o exec FALHAR
+            perror("execvp");
+            exit(127);
+        }
+
+        // PAI
+        int wst;
+        waitpid(filho, &amp;wst, 0);
+
+        if (WIFEXITED(wst)) {
+            // WEXITSTATUS devolve so 8 bits (0..255). "return -1" vira 255.
+            // O cast para (char) recupera o valor com sinal (-1).
+            int ret = (char) WEXITSTATUS(wst);
+            printf("Tentativa %d: instavel retornou %d\n", tentativa, ret);
+
+            if (ret == 0) {
+                printf("SUCESSO apos %d tentativa(s)\n", tentativa);
+                continuar = 0;
+            } else if (ret &lt; 0) {
+                printf("ERRO: parametros invalidos, desistindo\n");
+                continuar = 0;
+            }
+            // ret entre 1 e 3: falha temporaria -&gt; tenta de novo
+        } else if (WIFSIGNALED(wst)) {
+            int sig = WTERMSIG(wst);
+            printf("Tentativa %d: instavel terminou com o sinal %d (%s)\n",
+                   tentativa, sig, strsignal(sig));
+            // terminou de forma anormal -&gt; tenta de novo
+        }
+    }
+
+    return 0;
+}</code></pre>
+<p>Exemplo de saída real do gabarito (sem as linhas que o próprio <code>instavel</code> imprime):</p>
+<pre><code>Tentativa 1: instavel retornou 2
+Tentativa 2: instavel retornou 3
+Tentativa 3: instavel terminou com o sinal 6 (Aborted)
+Tentativa 4: instavel retornou 1
+Tentativa 5: instavel terminou com o sinal 6 (Aborted)
+Tentativa 6: instavel retornou 1
+Tentativa 7: instavel retornou 0
+SUCESSO apos 7 tentativa(s)
+
+$ ./q2 tarefa -3
+Tentativa 1: instavel retornou -1
+ERRO: parametros invalidos, desistindo</code></pre>
+</div></details>
+</section>
+
+<!-- ============================================================ Q3 -->
+<section class="question" id="q3">
+<h3>Questão 3 — Sinais e arquivos <span class="pts">2,5 pontos</span></h3>
+<p>Em <code>q3.c</code>, a função <code>trabalha()</code> incrementa para sempre a variável global <code>contador</code>. Queremos poder <strong>interromper e retomar</strong> esse trabalho. Altere o programa (sem mexer em <code>trabalha()</code>) para que:</p>
+<ol>
+<li>mostre o PID do processo no início (<strong>10%</strong>);</li>
+<li>ao receber <strong>SIGUSR1</strong>, imprima <code>Progresso: &lt;contador&gt;</code> e <strong>continue</strong> rodando (<strong>15%</strong>);</li>
+<li>ao receber <strong>SIGINT</strong>, grave o valor atual de <code>contador</code> em <strong>formato texto</strong> no arquivo <code>estado.txt</code> (sobrescrevendo o anterior) e imprima <code>Estado salvo: &lt;contador&gt;</code> (<strong>35%</strong>);</li>
+<li>depois de salvar, o processo deve terminar <strong>por causa do SIGINT</strong>, de modo que <code>echo $?</code> mostre 130 (<strong>10%</strong>);</li>
+<li>ao iniciar, se <code>estado.txt</code> existir, leia o valor salvo e <strong>continue a contagem a partir dele</strong> (<strong>20%</strong>);</li>
+<li>enquanto o handler de SIGINT roda, os sinais SIGTERM e SIGUSR1 devem ficar <strong>bloqueados</strong> (<strong>10%</strong>).</li>
+</ol>
+<p><strong>OBS:</strong></p>
+<ul>
+<li>Os handlers devem ser funções próprias, registradas na <code>main</code> com <code>sigaction</code>.</li>
+<li>Para arquivos, use <strong>apenas</strong> <code>open</code>, <code>read</code>, <code>write</code> e <code>close</code> (nada de <code>fopen</code>/<code>fprintf</code>/<code>fscanf</code>).</li>
+<li>Teste com <code>./q3 &amp;</code>, <code>kill -USR1 &lt;pid&gt;</code>, <code>kill -INT &lt;pid&gt;</code> e <code>cat estado.txt</code>. Depois rode de novo e confira que a contagem continuou.</li>
+</ul>
+<div class="files"><a class="btn small" href="prova/q3.c" download>⬇ q3.c (base)</a></div>
+<details class="answer"><summary>Ver gabarito comentado da Q3</summary><div class="details-body">
+<p><strong>Pontos-chave:</strong></p>
+<ul>
+<li>o número vira texto com <code>snprintf</code>, e o <code>write</code> usa o tamanho que ele devolve;</li>
+<li><code>O_TRUNC</code> sobrescreve o arquivo;</li>
+<li><code>sigaddset</code> na <code>sa_mask</code> do SIGINT faz o bloqueio;</li>
+<li>para terminar pelo sinal, volte ao <code>SIG_DFL</code> e chame <code>raise(SIGINT)</code>;</li>
+<li>a leitura do estado usa <code>read</code> até o EOF e depois <code>atol</code>.</li>
+</ul>
+<pre data-lang="c" data-src="prova/gabarito/q3.c"><code>// GABARITO - Prova Modelo SisHard - Questao 3
+// Compile: gcc -Wall -g q3.c -o q3
+// Teste:   ./q3 &amp;     kill -USR1 &lt;pid&gt;     kill -INT &lt;pid&gt;     cat estado.txt
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;string.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/stat.h&gt;
+
+long contador = 0;
+
+void trabalha() {
+    while (1) {
+        contador++;
+        if (contador % 50 == 0) {
+            usleep(1000);
+        }
+    }
+}
+
+// Salva o contador em formato TEXTO usando so open/write/close
+void salva_estado() {
+    int fd = open("estado.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) {
+        perror("open");
+        return;
+    }
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "%ld\n", contador); // numero -&gt; texto
+    write(fd, buf, n);
+    close(fd);
+}
+
+// Le estado.txt (se existir). Retorna 0 se o arquivo nao existir.
+long le_estado() {
+    int fd = open("estado.txt", O_RDONLY);
+    if (fd == -1) {
+        return 0; // ainda nao existe: comeca do zero
+    }
+    char buf[64];
+    int total = 0, lidos;
+    // read pode devolver menos bytes que o pedido: le ate o EOF (retorno 0)
+    while (total &lt; (int)sizeof(buf) - 1 &amp;&amp;
+           (lidos = read(fd, buf + total, sizeof(buf) - 1 - total)) &gt; 0) {
+        total += lidos;
+    }
+    buf[total] = '\0';
+    close(fd);
+    return atol(buf); // texto -&gt; numero
+}
+
+void handler_usr1(int sig) {
+    printf("Progresso: %ld\n", contador);
+}
+
+void handler_int(int sig) {
+    salva_estado();
+    printf("\nEstado salvo: %ld\n", contador);
+
+    // Volta ao comportamento padrao e reenvia o sinal:
+    // assim o processo termina DE VERDADE por SIGINT (o shell fica sabendo).
+    struct sigaction padrao;
+    padrao.sa_handler = SIG_DFL;
+    padrao.sa_flags = 0;
+    sigemptyset(&amp;padrao.sa_mask);
+    sigaction(SIGINT, &amp;padrao, NULL);
+    raise(SIGINT); // ou kill(getpid(), SIGINT);
+}
+
+int main() {
+    printf("Meu PID: %d\n", getpid());
+
+    contador = le_estado();
+    printf("Comecando de %ld\n", contador);
+
+    // SIGINT: durante o handler, bloqueia SIGTERM e SIGUSR1
+    struct sigaction s_int;
+    s_int.sa_handler = handler_int;
+    s_int.sa_flags = 0;
+    sigemptyset(&amp;s_int.sa_mask);
+    sigaddset(&amp;s_int.sa_mask, SIGTERM);
+    sigaddset(&amp;s_int.sa_mask, SIGUSR1);
+    sigaction(SIGINT, &amp;s_int, NULL);
+
+    // SIGUSR1: imprime o progresso
+    struct sigaction s_usr1;
+    s_usr1.sa_handler = handler_usr1;
+    s_usr1.sa_flags = 0;
+    sigemptyset(&amp;s_usr1.sa_mask);
+    sigaction(SIGUSR1, &amp;s_usr1, NULL);
+
+    trabalha();
+    return 0;
+}</code></pre>
+<p>Execução real do gabarito (duas rodadas):</p>
+<pre><code>Meu PID: 3888            |  Meu PID: 3893
+Comecando de 0           |  Comecando de 66600
+Progresso: 44400         |  Progresso: 111250
+Estado salvo: 66600      |  Estado salvo: 133800
+$? = 130 (SIGINT)        |  $? = 130</code></pre>
+<p>A rigor, <code>printf</code> não é <em>async-signal-safe</em>. Em código profissional usaríamos <code>write(1, ...)</code> dentro do handler, mas a disciplina aceita <code>printf</code> (é o que o gabarito oficial das aulas usa).</p>
+</div></details>
+</section>
+
+<!-- ============================================================ Q4 -->
+<section class="question" id="q4">
+<h3>Questão 4 — Threads e E/S <span class="pts">2,5 pontos</span></h3>
+<p>O programa <code>q4</code> é chamado como <code>./q4 &lt;max_threads&gt; &lt;arquivo&gt;</code>. Cada linha do arquivo tem números inteiros separados por espaços (as linhas podem ser <strong>muito longas</strong>). Para cada linha, crie uma thread que chama <code>soma_thread</code>. Essa thread soma os números com <code>soma_linha</code> (que demora 1 s), guarda o resultado na struct e acumula em <code>total_geral</code>.</p>
+<p>Suas tarefas:</p>
+<ul>
+<li>implementar <code>char *read_line(int fd)</code> usando <strong>apenas <code>read</code></strong>, aceitando linhas de <strong>tamanho arbitrário</strong>; com tamanho máximo fixo, metade desta nota (<strong>30%</strong>);</li>
+<li>completar a <code>main</code>: uma thread por linha (o argumento de cada uma no heap), esperar todas e imprimir, <strong>na ordem das linhas</strong>, <code>LINHA %02d SOMA %ld</code> e, no fim, <code>TOTAL: %ld</code> (<strong>20%</strong>);</li>
+<li>fazer as threads respeitarem o limite <code>max_threads</code> de <strong>execuções simultâneas</strong> de <code>soma_linha</code>: todas são criadas, mas esperam a vez (<strong>20%</strong>);</li>
+<li>eliminar a race condition em <code>total_geral</code> (<strong>10%</strong>);</li>
+<li>o programa passa no <code>valgrind --leak-check=full</code> sem erros nem vazamentos (<strong>20%</strong>, só se o resto estiver correto).</li>
+</ul>
+<p>Com o <code>numeros.txt</code> fornecido (6 linhas, sendo a 4ª uma linha longa e a 5ª com números negativos), a saída esperada é:</p>
+<pre><code>LINHA 00 SOMA 10
+LINHA 01 SOMA 60
+LINHA 02 SOMA 100
+LINHA 03 SOMA 500
+LINHA 04 SOMA -3
+LINHA 05 SOMA 42
+TOTAL: 709</code></pre>
+<p>Com <code>time ./q4 2 numeros.txt</code> o tempo deve ser de <strong>cerca de 3 s</strong> (6 linhas, 2 por vez); com <code>max_threads = 6</code>, cerca de 1 s. Imprima exatamente o formato acima, sem espaços extras. Compile com <code>gcc -Wall -g q4.c -o q4 -pthread</code>.</p>
+<div class="files"><a class="btn small" href="prova/q4.c" download>⬇ q4.c (base)</a><a class="btn small" href="prova/numeros.txt" download>⬇ numeros.txt</a></div>
+<details class="answer"><summary>Ver gabarito comentado da Q4</summary><div class="details-body">
+<p><strong>Pontos-chave:</strong></p>
+<ul>
+<li>o <code>read_line</code> dobra o buffer com <code>realloc</code> e trata a última linha sem <code>\n</code>;</li>
+<li>o semáforo <code>limite</code> começa com <code>max_threads</code> e envolve só o trabalho;</li>
+<li>o mutex protege <code>total_geral</code>;</li>
+<li>os resultados são impressos <strong>depois</strong> do join de cada thread, e cada <code>free</code> vem depois do respectivo join.</li>
+</ul>
+<pre data-lang="c" data-src="prova/gabarito/q4.c"><code>// GABARITO - Prova Modelo SisHard - Questao 4
+// Compile: gcc -Wall -g q4.c -o q4 -pthread
+// Teste:   time ./q4 2 numeros.txt     (6 linhas, 2 por vez -&gt; ~3 s)
+//          valgrind --leak-check=full ./q4 3 numeros.txt
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;semaphore.h&gt;
+
+typedef struct {
+    int id;
+    char *linha;
+    long soma;
+    sem_t *limite;            // limita quantas threads trabalham ao mesmo tempo
+    pthread_mutex_t *mutex;   // protege total_geral
+} t_arg;
+
+long total_geral = 0;
+
+long soma_linha(char *linha) {
+    sleep(1);
+    long soma = 0;
+    char *p = linha;
+    char *fim;
+    while (1) {
+        long v = strtol(p, &amp;fim, 10);
+        if (p == fim) break;
+        soma += v;
+        p = fim;
+    }
+    return soma;
+}
+
+void *soma_thread(void *_arg) {
+    t_arg *arg = _arg;
+
+    sem_wait(arg-&gt;limite);          // pede uma "vaga" (bloqueia se ja ha max_threads)
+    arg-&gt;soma = soma_linha(arg-&gt;linha);
+    sem_post(arg-&gt;limite);          // devolve a vaga
+
+    pthread_mutex_lock(arg-&gt;mutex); // regiao critica: leitura+escrita da global
+    total_geral += arg-&gt;soma;
+    pthread_mutex_unlock(arg-&gt;mutex);
+    return NULL;
+}
+
+char *read_line(int fd) {
+    int cap = 16, len = 0;
+    char *buf = malloc(cap);
+    char c;
+    int lidos;
+
+    while ((lidos = read(fd, &amp;c, 1)) &gt; 0) {
+        if (c == '\n') break;
+        if (len + 1 &gt;= cap) {         // +1 para o '\0'
+            cap *= 2;
+            buf = realloc(buf, cap);
+        }
+        buf[len++] = c;
+    }
+
+    if (lidos &lt;= 0 &amp;&amp; len == 0) {     // EOF sem nenhum caractere lido
+        free(buf);
+        return NULL;
+    }
+    buf[len] = '\0';
+    return buf;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 3) {
+        printf("USO: ./q4 &lt;max_threads&gt; &lt;arquivo&gt;\n");
+        return 1;
+    }
+    int max_threads = atoi(argv[1]);
+    int fd = open(argv[2], O_RDONLY);
+    if (fd == -1) {
+        perror("open");
+        return 1;
+    }
+
+    sem_t limite;
+    sem_init(&amp;limite, 0, max_threads);     // valor inicial = numero de vagas
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+    int cap = 2, n = 0;
+    pthread_t *tids = malloc(sizeof(pthread_t) * cap);
+    t_arg **args = malloc(sizeof(t_arg *) * cap);
+
+    char *linha;
+    while ((linha = read_line(fd)) != NULL) {
+        if (n == cap) {
+            cap *= 2;
+            tids = realloc(tids, sizeof(pthread_t) * cap);
+            args = realloc(args, sizeof(t_arg *) * cap);
+        }
+        t_arg *a = malloc(sizeof(t_arg));  // cada thread tem SEU argumento no heap
+        a-&gt;id = n;
+        a-&gt;linha = linha;
+        a-&gt;soma = 0;
+        a-&gt;limite = &amp;limite;
+        a-&gt;mutex = &amp;mutex;
+        args[n] = a;
+        pthread_create(&amp;tids[n], NULL, soma_thread, a);
+        n++;
+    }
+    close(fd);
+
+    for (int i = 0; i &lt; n; i++) {
+        pthread_join(tids[i], NULL);
+        printf("LINHA %02d SOMA %ld\n", args[i]-&gt;id, args[i]-&gt;soma);
+        free(args[i]-&gt;linha);
+        free(args[i]);
+    }
+    printf("TOTAL: %ld\n", total_geral);
+
+    free(args);
+    free(tids);
+    sem_destroy(&amp;limite);
+    pthread_mutex_destroy(&amp;mutex);
+    return 0;
+}</code></pre>
+<p>Verificado: <code>time ./q4 2 numeros.txt</code> levou 3,0 s, e o valgrind deu "All heap blocks were freed" e "0 errors".</p>
+</div></details>
+</section>
+
+<h2 id="correcao">Sua nota na Parte A</h2>
+<p>Some, em cada questão, a porcentagem dos itens da rubrica que você cumpriu × 2,5. <strong>Meta: ≥ 5,0.</strong> Lembre que AF &lt; 3,5 reprova pelas condições.</p>
+
+<!-- ============================================================ QUIZ -->
+<h2 id="quiz">Parte B: quiz objetivo (correção automática)</h2>
+<p>Escolha uma alternativa por questão e clique em <strong>Corrigir</strong>. As respostas ficam salvas no navegador. O filtro "Só AF" mostra só a 2ª metade; "Só Assembly/AI" serve para revisar a base.</p>
+<div id="quiz"></div>
+</main>
+</div>
+<script src="assets/quiz-data.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

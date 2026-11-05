@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entrada/Saída e arquivos — SisHard Resumo</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav id="sidebar"></nav>
+<main>
+<p class="kicker">Aula 13 · <span class="badge af">cai na AF</span></p>
+<h1>Entrada/Saída com chamadas POSIX</h1>
+<p class="lead">Na prova, arquivos são manipulados <strong>somente</strong> com <code>open</code>, <code>read</code>, <code>write</code> e <code>close</code>. Nada de <code>fopen</code>, <code>fprintf</code>, <code>fgets</code> ou <code>getline</code>.</p>
+<div id="page-toc" class="page-toc"></div>
+
+<h2 id="arquivos">Tudo é arquivo</h2>
+<ul>
+<li>Em Unix, um arquivo é uma <strong>sequência de bytes</strong> B<sub>0</sub>…B<sub>m-1</sub>. Para o kernel não existe diferença entre "texto" e "binário".</li>
+<li>Dispositivos de E/S também são arquivos (<code>/dev</code>), e o kernel expõe estruturas via <code>/proc</code> e <code>/sys</code>.</li>
+<li>Tipos de arquivo:
+<ul>
+<li><strong>regular</strong>: dados arbitrários;</li>
+<li><strong>diretório</strong>: array de links nome→arquivo, sempre com <code>.</code> e <code>..</code>;</li>
+<li><strong>socket</strong>: comunicação com outra máquina;</li>
+<li><strong>pipe/FIFO</strong>: comunicação entre processos da mesma máquina;</li>
+<li><strong>link simbólico</strong>: um "ponteiro" para outro arquivo;</li>
+<li><strong>dispositivo</strong>: de bloco ou de caractere.</li>
+</ul></li>
+<li>Fim de linha: <code>\n</code> no Linux/macOS e <code>\r\n</code> no Windows e em protocolos de internet.</li>
+<li>Cada processo tem um diretório corrente (cwd), que muda com <code>chdir()</code>. <code>man hier</code> descreve a hierarquia de pastas.</li>
+</ul>
+<div class="box def"><span class="box-title">File descriptor (fd)</span>
+<p>Um <code>int</code> que identifica um arquivo aberto <strong>no processo</strong>. Todo processo criado pelo shell já nasce com três abertos:</p>
+<div class="table-wrap"><table><tr><th>fd</th><th>nome</th><th>macro</th></tr>
+<tr><td>0</td><td>entrada padrão (stdin)</td><td><code>STDIN_FILENO</code></td></tr>
+<tr><td>1</td><td>saída padrão (stdout)</td><td><code>STDOUT_FILENO</code></td></tr>
+<tr><td>2</td><td>saída de erro (stderr)</td><td><code>STDERR_FILENO</code></td></tr></table></div>
+<p>Por isso <code>write(1, "oi\n", 3)</code> imprime no terminal.</p></div>
+
+<h2 id="open">open e close</h2>
+<pre data-lang="c"><code>#include &lt;fcntl.h&gt;      // open e flags O_*
+#include &lt;sys/stat.h&gt;   // modos
+#include &lt;unistd.h&gt;     // read, write, close
+
+int open(const char *pathname, int flags);
+int open(const char *pathname, int flags, mode_t mode);   // mode só se criar (O_CREAT)
+int close(int fd);</code></pre>
+<p><code>open</code> retorna o fd (≥ 0) ou <strong>-1 em erro</strong>, e preenche <code>errno</code>.</p>
+<div class="table-wrap"><table>
+<tr><th>Flag</th><th>Efeito</th></tr>
+<tr><td><code>O_RDONLY</code> / <code>O_WRONLY</code> / <code>O_RDWR</code></td><td>Somente leitura, somente escrita ou leitura e escrita (escolha <strong>uma</strong>).</td></tr>
+<tr><td><code>O_CREAT</code></td><td>Cria o arquivo se não existir (exige o 3º argumento <code>mode</code>).</td></tr>
+<tr><td><code>O_TRUNC</code></td><td>Se já existe, <strong>apaga o conteúdo</strong> (tamanho 0) antes de escrever.</td></tr>
+<tr><td><code>O_APPEND</code></td><td>Toda escrita vai para o fim do arquivo.</td></tr>
+<tr><td><code>O_EXCL</code> (com <code>O_CREAT</code>)</td><td><strong>Falha</strong> se o arquivo já existe (<code>errno == EEXIST</code>). Serve para não sobrescrever sem perguntar.</td></tr>
+</table></div>
+<pre data-lang="c"><code>int fd = open("saida.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+if (fd == -1) {
+    perror("open");        // imprime a mensagem do errno, ex.: "open: Permission denied"
+    exit(1);
+}
+// ... usa fd ...
+close(fd);                 // não feche duas vezes o mesmo fd!</code></pre>
+<div class="box trap"><span class="box-title">Pegadinha do experimento "100a / 3b"</span>
+<p>Ao copiar um arquivo de 3 bytes ("bbb") por cima de um de 100 bytes ("aaa…") <strong>sem <code>O_TRUNC</code></strong>, o resultado é <code>bbbaaaa…</code> (97 'a' sobram): o <code>open</code> não apaga o conteúdo antigo, e o <code>write</code> só sobrescreve os primeiros bytes. Use <code>O_TRUNC</code> (ou <code>O_EXCL</code> para não sobrescrever).</p></div>
+
+<h2 id="readwrite">read e write</h2>
+<pre data-lang="c"><code>ssize_t read(int fd, void *buf, size_t count);          // lê ATÉ count bytes para buf
+ssize_t write(int fd, const void *buf, size_t count);   // escreve count bytes de buf</code></pre>
+<ul>
+<li>Ambas retornam o <strong>número de bytes</strong> efetivamente lidos ou escritos, e <strong>-1 em erro</strong>.</li>
+<li><strong><code>read</code> retorna 0 quando o arquivo acabou (EOF).</strong> É assim que se detecta o fim.</li>
+<li>São <strong>síncronas</strong>: bloqueiam até haver dados (no terminal, até você digitar).</li>
+<li>Elas <strong>não</strong> colocam <code>'\0'</code>. Se for tratar como string, coloque você mesmo: <code>buf[n] = '\0';</code>.</li>
+<li>Cada chamada avança a <strong>posição corrente</strong> do arquivo. <code>lseek(fd, 0, SEEK_SET)</code> volta ao início.</li>
+</ul>
+<div class="box def"><span class="box-title">Short counts</span>
+<p>O <code>read</code>/<code>write</code> pode transferir <strong>menos</strong> bytes que o pedido. Isso acontece:</p>
+<ul>
+<li>no EOF;</li>
+<li>ao ler linhas do terminal;</li>
+<li>com sockets e pipes;</li>
+<li>quando a chamada é interrompida por um sinal.</li>
+</ul>
+<p>Nunca acontece ao ler arquivos regulares (exceto no EOF) nem ao escrever neles. Por isso um laço de leitura robusto testa o retorno.</p></div>
+
+<h3>Lendo um arquivo inteiro, byte a byte</h3>
+<pre data-lang="c"><code>int fd = open(argv[1], O_RDONLY);
+char c;
+while (read(fd, &amp;c, 1) &gt; 0) {   // &gt; 0: ainda há bytes (0 = EOF, -1 = erro)
+    printf("%c", c);
+}
+close(fd);</code></pre>
+
+<h3>copy_file com buffer (exercício da aula)</h3>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;unistd.h&gt;
+
+int main(int argc, char *argv[]) {
+    if (argc != 3) { printf("uso: %s origem destino\n", argv[0]); return 1; }
+    int in = open(argv[1], O_RDONLY);
+    if (in == -1) { perror("origem"); return 1; }
+    int out = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (out == -1) { perror("destino"); close(in); return 1; }
+
+    char buf[4096];
+    ssize_t n;
+    while ((n = read(in, buf, sizeof(buf))) &gt; 0) {
+        write(out, buf, n);         // escreve exatamente o que foi lido (n, não sizeof)
+    }
+    close(in);
+    close(out);
+    return 0;
+}</code></pre>
+<p><strong>Desempenho:</strong> com um buffer de 1 byte o programa faz uma syscall por byte (milhões de trocas para o kernel). Com um buffer maior (100, 4096 bytes) faz muito menos chamadas, e por isso fica muito mais rápido. Meça com <code>time</code>, gere arquivos grandes com <code>dd if=/dev/urandom of=ex.bin bs=1M count=100</code> e confira com <code>diff</code> ou <code>cmp</code>.</p>
+
+<h2 id="readline">Ler uma linha de tamanho arbitrário (cai muito!)</h2>
+<p>Apareceu na revisão (aula 20) e na Q4 do simulado: <em>"<code>char *read_line(int fd)</code> que retorna a próxima linha sem o <code>\n</code>, ou NULL no fim, usando só <code>read</code>"</em>. Pelas rubricas, a versão com tamanho máximo fixo vale 50%; a de <strong>tamanho arbitrário</strong>, com <code>realloc</code>, vale 100%.</p>
+<pre data-lang="c"><code>char *read_line(int fd) {
+    int cap = 16, len = 0;
+    char *buf = malloc(cap);
+    char c;
+    int lidos;
+
+    while ((lidos = read(fd, &amp;c, 1)) &gt; 0) {
+        if (c == '\n') break;          // fim da linha (não guarda o \n)
+        if (len + 1 &gt;= cap) {          // reserva espaço para o '\0'
+            cap *= 2;
+            buf = realloc(buf, cap);
+        }
+        buf[len++] = c;
+    }
+    if (lidos &lt;= 0 &amp;&amp; len == 0) {      // EOF e nada lido: acabou
+        free(buf);
+        return NULL;
+    }
+    buf[len] = '\0';
+    return buf;                        // quem chama deve dar free()
+}
+
+// uso:
+char *linha;
+while ((linha = read_line(fd)) != NULL) {
+    if (linha[0] &gt;= 'A' &amp;&amp; linha[0] &lt;= 'Z') printf("%s\n", linha);   // só as que começam com maiúscula
+    free(linha);
+}</code></pre>
+<div class="box trap"><span class="box-title">Cuidados que tiram ponto</span>
+<ul>
+<li>A <strong>última linha sem <code>\n</code></strong> precisa ser retornada (o <code>lidos == 0</code> com <code>len &gt; 0</code>).</li>
+<li>Não esqueça o <code>'\0'</code> nem o <code>free</code> de cada linha: o valgrind acusa vazamento.</li>
+<li>Se tiver <code>\r\n</code> (arquivo do Windows), remova o <code>\r</code> também.</li>
+</ul></div>
+
+<h2 id="numeros">Escrever e ler números em arquivo texto</h2>
+<p><code>write</code> escreve bytes, não números. Para gravar um <code>double</code> ou <code>long</code> "em formato de texto" (ex.: <code>pi.txt</code> do simulado), converta com <code>snprintf</code> e escreva a string:</p>
+<pre data-lang="c"><code>void salva_double(const char *nome, double valor) {
+    int fd = open(nome, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) { perror("open"); return; }
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "%f\n", valor);   // n = quantos chars
+    write(fd, buf, n);
+    close(fd);
+}
+
+double le_double(const char *nome) {
+    int fd = open(nome, O_RDONLY);
+    if (fd == -1) return 0.0;
+    char buf[64];
+    int n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n &lt;= 0) return 0.0;
+    buf[n] = '\0';
+    return atof(buf);                                    // texto -&gt; número
+}</code></pre>
+<p>Para imprimir sem <code>printf</code>: <code>write(STDOUT_FILENO, buf, n)</code>. O <code>write(fd, &amp;valor, sizeof(valor))</code> grava em <strong>binário</strong>, ilegível com <code>cat</code>; só use se o enunciado pedir.</p>
+
+<h2 id="permissoes">Permissões e posse de arquivos</h2>
+<p>Cada arquivo tem um <strong>usuário dono</strong>, um <strong>grupo dono</strong> e permissões para três classes: <strong>dono</strong>, <strong>grupo</strong> e <strong>outros</strong>. Cada classe é um dígito octal que soma:</p>
+<div class="table-wrap"><table>
+<tr><th>Bit</th><th>Valor</th><th>Em arquivo</th><th>Em diretório</th></tr>
+<tr><td><code>r</code></td><td>4</td><td>ler</td><td>listar</td></tr>
+<tr><td><code>w</code></td><td>2</td><td>escrever</td><td>criar e apagar dentro</td></tr>
+<tr><td><code>x</code></td><td>1</td><td>executar</td><td>entrar (cd)</td></tr>
+</table></div>
+<div class="table-wrap"><table>
+<tr><th>Modo</th><th>ls -l</th><th>Significado</th></tr>
+<tr><td><code>0700</code></td><td><code>-rwx------</code></td><td>só o dono lê, escreve e executa</td></tr>
+<tr><td><code>0644</code></td><td><code>-rw-r--r--</code></td><td>dono lê e escreve; os demais só leem (padrão de arquivo)</td></tr>
+<tr><td><code>0640</code></td><td><code>-rw-r-----</code></td><td>dono lê e escreve, o grupo lê, os outros nada. Bom para compartilhar só com quem você confia.</td></tr>
+<tr><td><code>0755</code></td><td><code>-rwxr-xr-x</code></td><td>só o dono modifica; <strong>todos executam</strong> (padrão de executável)</td></tr>
+<tr><td><code>0600</code></td><td><code>-rw-------</code></td><td>privado (chaves, senhas)</td></tr>
+</table></div>
+<ul>
+<li>No <code>ls -l</code>, a 1ª coluna traz o tipo + <code>rwx</code> do dono, do grupo e dos outros; depois vêm o usuário dono e o grupo dono.</li>
+<li>O <code>0</code> na frente indica octal em C: <code>0644</code> ≠ <code>644</code>!</li>
+<li>O mode final é <code>mode &amp; ~umask</code> (o umask, tipicamente 022, retira permissões).</li>
+<li>Rodando com <code>sudo</code>, o arquivo criado pertence ao <strong>root</strong>. Ajuste com <code>sudo chown usuario:grupo arq</code> e <code>chmod 644 arq</code>.</li>
+<li>Abrir sem permissão faz <code>open</code> retornar -1 com <code>errno == EACCES</code> ("Permission denied"). Sempre cheque o retorno.</li>
+<li>Metadados (tamanho, dono, permissões, datas) ficam em <code>struct stat</code>, obtida com <code>stat()</code>/<code>fstat()</code> (<code>man 7 inode</code>).</li>
+</ul>
+<h3>errno: diferenciando erros</h3>
+<pre data-lang="c"><code>#include &lt;errno.h&gt;
+int fd = open(dest, O_WRONLY | O_CREAT | O_EXCL, 0644);
+if (fd == -1) {
+    if (errno == EEXIST) {           // já existe: pergunte antes de sobrescrever
+        printf("Sobrescrever %s? (s/n) ", dest);
+        // ... se sim: fd = open(dest, O_WRONLY | O_TRUNC);
+    } else if (errno == EACCES) {
+        printf("Sem permissão!\n");
+    } else {
+        perror("open");
+    }
+}</code></pre>
+
+<h2 id="resumo">Resumo relâmpago</h2>
+<ul>
+<li>Use <code>open(nome, O_RDONLY)</code> para ler e <code>open(nome, O_WRONLY|O_CREAT|O_TRUNC, 0644)</code> para gravar. Sempre teste <code>== -1</code>.</li>
+<li><code>read</code> retorna o número de bytes lidos (0 = EOF, -1 = erro). Nunca põe o <code>'\0'</code>.</li>
+<li><code>write(fd, buf, n)</code>: use o <code>n</code> que você leu ou gerou com <code>snprintf</code>.</li>
+<li>Os fds 0, 1 e 2 são stdin, stdout e stderr. Feche o que você abrir.</li>
+<li>Permissões em octal: r=4, w=2, x=1, na ordem dono/grupo/outros.</li>
+<li>Includes: <code>&lt;fcntl.h&gt;</code>, <code>&lt;unistd.h&gt;</code>, <code>&lt;sys/stat.h&gt;</code>, <code>&lt;errno.h&gt;</code>. Manuais: <code>man 2 open</code>, <code>man 2 read</code>, <code>man 2 write</code>, <code>man chmod</code>.</li>
+</ul>
+</main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

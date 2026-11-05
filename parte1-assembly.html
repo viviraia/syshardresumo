@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dados, Assembly x86-64 e gdb — SisHard Resumo</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav id="sidebar"></nav>
+<main>
+<p class="kicker">Aulas 01 a 10 · <span class="badge ai">base / AI</span> · Hackerlab</p>
+<h1>Dados na CPU, Assembly x86-64 e gdb</h1>
+<p class="lead">Como um programa em C vira bytes e instruções, e como fazer a <strong>engenharia reversa</strong> de Assembly para C. Foi o conteúdo da AI e do Hackerlab, e é a base para entender tudo que vem depois.</p>
+<div id="page-toc" class="page-toc"></div>
+
+<h2 id="inteiros">Inteiros: bases, complemento de 2 e overflow</h2>
+<ul>
+<li><strong>Bit</strong> é 0 ou 1, e <strong>1 byte = 8 bits</strong>. A mesma sequência de bits pode ser inteiro, caractere, instrução ou endereço: <em>o tipo é que dá o significado</em>.</li>
+<li><strong>Hexadecimal</strong>: 1 dígito = 4 bits. <code>0x2F = 0010 1111 = 47</code>, e 1 byte = 2 dígitos hex.</li>
+<li>Conversão decimal→binário: divisões sucessivas por 2 (os restos, lidos de baixo para cima). Binário→hex: agrupe de 4 em 4 bits a partir da direita.</li>
+</ul>
+<div class="box def"><span class="box-title">Complemento de 2 (inteiros com sinal)</span>
+<p>Com <em>w</em> bits, o bit mais significativo vale <strong>−2<sup>w−1</sup></strong>. Faixa: <code>−2<sup>w−1</sup> … 2<sup>w−1</sup>−1</code>. Sem sinal: <code>0 … 2<sup>w</sup>−1</code>.</p>
+<p><strong>Negar:</strong> inverta todos os bits e some 1 (<code>−x = ~x + 1</code>). <code>−1</code> é <strong>tudo 1</strong> (<code>0xFF…FF</code>).</p>
+<p>Exemplo: <code>char ch = 0b10000111;</code> imprime <strong>−121</strong> (−128 + 7), porque <code>char</code> tem sinal.</p></div>
+<div class="table-wrap"><table>
+<tr><th>Tipo C</th><th>Bytes</th><th>Faixa (signed)</th><th>Máx. unsigned</th></tr>
+<tr><td><code>char</code></td><td>1</td><td>−128 … 127</td><td>255</td></tr>
+<tr><td><code>short</code></td><td>2</td><td>−32768 … 32767</td><td>65535</td></tr>
+<tr><td><code>int</code></td><td>4</td><td>≈ ±2,1·10<sup>9</sup></td><td>4294967295</td></tr>
+<tr><td><code>long</code> / ponteiro</td><td>8</td><td>≈ ±9,2·10<sup>18</sup></td><td>2<sup>64</sup>−1</td></tr>
+</table></div>
+<ul>
+<li><strong>Overflow</strong>: só os <em>w</em> bits menos significativos sobrevivem. <code>unsigned short x = 80000;</code> guarda <code>80000 mod 65536 = 14464</code>.</li>
+<li><code>unsigned short x = -1;</code> guarda 16 bits em 1, ou seja, <strong>65535</strong>. Os bits são os mesmos e a interpretação muda.</li>
+<li><strong>Extensão de sinal</strong>: um <code>char</code> −126 (<code>0x82</code>) promovido a <code>int</code> vira <code>0xffffff82</code>. Um <code>unsigned char</code> seria estendido com zeros (<code>0x00000082</code>).</li>
+<li>Operações bit a bit: <code>&amp;</code> (E), <code>|</code> (OU), <code>^</code> (XOR), <code>~</code> (NÃO), <code>&lt;&lt;</code>, <code>&gt;&gt;</code>.
+<ul>
+<li><code>x &amp; 1</code> testa se x é ímpar.</li>
+<li><code>x &lt;&lt; k</code> equivale a <code>x · 2<sup>k</sup></code>.</li>
+<li><code>&gt;&gt;</code> em signed é aritmético (repete o sinal) e em unsigned é lógico (entra 0).</li>
+</ul></li>
+</ul>
+
+<h2 id="ram">Representação de dados na RAM</h2>
+<ul>
+<li><strong>Little endian</strong> (x86-64): o byte <em>menos</em> significativo fica no menor endereço. <code>int n = 0x0a0c0b0d;</code> aparece na memória como <code>0d 0b 0c 0a</code>. No big endian é o contrário. A unidade é o byte: dentro de um byte nada se inverte.</li>
+<li><strong>Arrays</strong> mantêm a ordem dos elementos, e cada elemento é little endian: <code>short arr[] = {0x1122, 0x3344}</code> fica <code>22 11 44 33</code>.</li>
+<li><strong>Strings</strong> são arrays de <code>char</code> terminados em <code>'\0'</code>: <code>"Oi C :-)"</code> ocupa 9 bytes. Os códigos ASCII mais úteis: <code>'0'</code>=0x30, <code>'A'</code>=0x41, <code>'a'</code>=0x61, <code>' '</code>=0x20.</li>
+<li><strong>Aritmética de ponteiros</strong>: <code>p + 1</code> soma <code>sizeof(*p)</code> bytes (4 para <code>int*</code>, 8 para <code>long*</code>), e <code>*(x+i) ≡ x[i]</code>.</li>
+<li><strong>union</strong>: os campos compartilham o mesmo endereço, e o tamanho é o do maior campo.</li>
+</ul>
+<h3 id="struct">struct e alinhamento</h3>
+<p>Uma struct é um bloco contíguo com os campos na <strong>ordem declarada</strong>; o compilador não reordena. Um campo de K bytes precisa ficar num endereço <strong>múltiplo de K</strong>, e o compilador insere <em>padding</em> para isso. O tamanho total é múltiplo do maior alinhamento entre os campos. O endereço da struct é igual ao do primeiro campo.</p>
+<pre data-lang="c"><code>struct player {
+    char name[20];   // offset 0..19
+                     // 4 bytes de padding (level precisa de múltiplo de 8)
+    long level;      // offset 24..31
+    char icon_id;    // offset 32
+                     // 7 bytes de padding
+    long score;      // offset 40..47
+};                   // sizeof = 48 (11 bytes "desperdiçados")</code></pre>
+<p>Pelos endereços impressos dá para inferir o tamanho <em>máximo</em> de cada campo: é a diferença entre endereços consecutivos.</p>
+<h3 id="elf">Executável ELF</h3>
+<div class="table-wrap"><table>
+<tr><th>Seção</th><th>Conteúdo</th></tr>
+<tr><td><code>.text</code></td><td>código de máquina</td></tr>
+<tr><td><code>.rodata</code></td><td>constantes (strings literais, como as do printf)</td></tr>
+<tr><td><code>.data</code></td><td>globais inicializadas</td></tr>
+<tr><td><code>.bss</code></td><td>globais não inicializadas (só reserva espaço)</td></tr>
+<tr><td><code>.symtab</code>, <code>.debug</code></td><td>símbolos e informações de debug (<code>-g</code>)</td></tr>
+</table></div>
+<p>As variáveis locais só existem em tempo de execução, na <strong>pilha</strong>. Outros formatos de executável: PE (Windows) e Mach-O (macOS).</p>
+
+<h2 id="gdb">gdb: comandos essenciais</h2>
+<pre><code>gcc -Og -g -Wall -std=c99 prog.c -o prog   # -g: info de debug, -Og: otimiza sem atrapalhar
+gdb ./prog</code></pre>
+<div class="table-wrap"><table>
+<tr><th>Comando</th><th>O que faz</th></tr>
+<tr><td><code>info functions</code> / <code>info variables</code></td><td>lista funções e globais com endereços. Sem <code>-g</code>, use cast: <code>print (long) var</code>.</td></tr>
+<tr><td><code>disas func</code></td><td>mostra o Assembly da função (a seta <code>=&gt;</code> marca a próxima instrução)</td></tr>
+<tr><td><code>break func</code> / <code>b *0x1149</code></td><td>breakpoint numa função ou num endereço. <code>info b</code> lista os breakpoints.</td></tr>
+<tr><td><code>run</code> / <code>continue</code></td><td>executa ou continua até o próximo breakpoint (<code>run &lt; entrada.txt</code> redireciona a entrada)</td></tr>
+<tr><td><code>stepi</code> / <code>nexti</code></td><td>executa uma instrução (<code>nexti</code> não entra em <code>call</code>)</td></tr>
+<tr><td><code>info registers rdi</code> / <code>p $rdi</code></td><td>valor de um registrador</td></tr>
+<tr><td><code>x/nfu endereço</code></td><td>examina a memória: <strong>n</strong> = quantidade, <strong>f</strong> = formato (<code>x</code> hex, <code>d</code> decimal, <code>s</code> string, <code>i</code> instrução, <code>a</code> endereço, <code>t</code> binário, <code>c</code> char), <strong>u</strong> = unidade (<code>b</code> 1, <code>h</code> 2, <code>w</code> 4, <code>g</code> 8 bytes)</td></tr>
+<tr><td><code>x/s 0x2004</code></td><td>mostra uma string (ex.: o formato do printf/scanf)</td></tr>
+<tr><td><code>x/1dh 0x4012</code></td><td>o 2º <code>short</code> de um array em 0x4010</td></tr>
+<tr><td><code>set *((int *) 0x5555...) = -10</code></td><td>escreve na memória</td></tr>
+<tr><td><code>objdump -d arq.o</code> / <code>objdump -r</code></td><td>desmonta e mostra as relocations, no terminal</td></tr>
+</table></div>
+
+<h2 id="registradores">Registradores e convenção de chamada</h2>
+<div class="table-wrap"><table>
+<tr><th>64 bits</th><th>32</th><th>16</th><th>8</th><th>Papel</th></tr>
+<tr><td><code>%rax</code></td><td><code>%eax</code></td><td><code>%ax</code></td><td><code>%al</code></td><td><strong>valor de retorno</strong></td></tr>
+<tr><td><code>%rdi</code></td><td><code>%edi</code></td><td><code>%di</code></td><td><code>%dil</code></td><td><strong>1º argumento</strong></td></tr>
+<tr><td><code>%rsi</code></td><td><code>%esi</code></td><td><code>%si</code></td><td><code>%sil</code></td><td><strong>2º argumento</strong></td></tr>
+<tr><td><code>%rdx</code></td><td><code>%edx</code></td><td><code>%dx</code></td><td><code>%dl</code></td><td><strong>3º argumento</strong> (e o resto do <code>idiv</code>)</td></tr>
+<tr><td><code>%rcx</code></td><td><code>%ecx</code></td><td><code>%cx</code></td><td><code>%cl</code></td><td><strong>4º argumento</strong></td></tr>
+<tr><td><code>%r8</code></td><td><code>%r8d</code></td><td><code>%r8w</code></td><td><code>%r8b</code></td><td><strong>5º argumento</strong></td></tr>
+<tr><td><code>%r9</code></td><td><code>%r9d</code></td><td><code>%r9w</code></td><td><code>%r9b</code></td><td><strong>6º argumento</strong></td></tr>
+<tr><td><code>%rsp</code></td><td colspan="3"></td><td>topo da pilha</td></tr>
+<tr><td><code>%rip</code></td><td colspan="3"></td><td>endereço da <strong>próxima</strong> instrução (program counter)</td></tr>
+<tr><td><code>%rbx %rbp %r12–%r15</code></td><td colspan="3"></td><td><em>callee-saved</em>: a função que usa precisa salvar com <code>push</code> e restaurar com <code>pop</code></td></tr>
+</table></div>
+<p>O tamanho do registrador indica o tipo em C:</p>
+<ul>
+<li><code>r..</code> (8 bytes) é <code>long</code> ou <strong>ponteiro</strong>;</li>
+<li><code>e..</code> e <code>..d</code> (4 bytes) são <code>int</code>;</li>
+<li><code>..x</code> de duas letras (2 bytes) é <code>short</code>;</li>
+<li><code>..l</code>/<code>..h</code> (1 byte) é <code>char</code>.</li>
+</ul>
+<p>O ponto flutuante usa <code>%xmm0–7</code> nos argumentos e <code>%xmm0</code> no retorno. Os registradores menores são "virtuais": escrever em <code>%eax</code> <strong>zera</strong> os 32 bits de cima de <code>%rax</code>.</p>
+<p>Sufixos das instruções: <code>b</code> = 1 byte, <code>w</code> = 2, <code>l</code> = 4, <code>q</code> = 8 (<code>movl</code>, <code>addq</code>...).</p>
+
+<h2 id="instrucoes">Instruções principais</h2>
+<div class="table-wrap"><table>
+<tr><th>Instrução (AT&amp;T: origem, destino)</th><th>Em C</th></tr>
+<tr><td><code>mov %rsi, %rax</code></td><td><code>rax = rsi</code></td></tr>
+<tr><td><code>mov (%rdi), %eax</code></td><td><code>eax = *rdi</code> (parênteses = <strong>acesso à memória</strong>)</td></tr>
+<tr><td><code>mov %eax, 8(%rdi)</code></td><td><code>*(rdi + 8) = eax</code></td></tr>
+<tr><td><code>add %rsi, %rdi</code> / <code>sub</code> / <code>imul</code></td><td><code>rdi += rsi</code>, <code>-=</code>, <code>*=</code></td></tr>
+<tr><td><code>neg %rax</code> / <code>not</code></td><td><code>rax = -rax</code> / <code>~rax</code></td></tr>
+<tr><td><code>shl $k</code> / <code>sar $k</code> / <code>shr $k</code></td><td><code>&lt;&lt; k</code> / <code>&gt;&gt; k</code> com sinal / sem sinal (<code>shr %edi</code> = <code>/2</code>)</td></tr>
+<tr><td><code>and</code>, <code>or</code>, <code>xor %eax,%eax</code></td><td><code>&amp;</code>, <code>|</code>, <code>eax = 0</code></td></tr>
+<tr><td><code>lea D(%r1,%r2,S), %rax</code></td><td><code>rax = D + r1 + r2*S</code>, <strong>sem acessar memória</strong></td></tr>
+<tr><td><code>cltd</code>/<code>cqto</code> + <code>idiv %esi</code></td><td><code>eax = edx:eax / esi</code> (quociente), <code>edx = %</code> (resto)</td></tr>
+<tr><td><code>movzbl %al, %eax</code></td><td>cast <code>unsigned char → int</code> (completa com zeros)</td></tr>
+<tr><td><code>movslq %edx, %rcx</code> / <code>cltq</code></td><td>cast <code>int → long</code> com sinal (usado para indexar arrays)</td></tr>
+<tr><td><code>call f</code> / <code>ret</code></td><td>chama f / <code>return rax</code></td></tr>
+<tr><td><code>push %rbx</code> / <code>pop %rbx</code></td><td>salva e restaura na pilha (sem equivalente em C)</td></tr>
+</table></div>
+<p>Os casts seguem o padrão <code>MOV t s d</code>: <code>t</code> = <code>z</code> (zero) ou <code>s</code> (sinal); <code>s</code>/<code>d</code> = tamanhos <code>b w l q</code>. Ex.: <code>movzwq</code> é <code>unsigned short → unsigned long</code>.</p>
+<div class="box tip"><span class="box-title">LEA: aritmética ou &amp;?</span>
+<ul>
+<li>Se usa <code>%rsp</code>, é sempre <strong><code>&amp;variável_local</code></strong>.</li>
+<li>Se os registradores guardam números usados em contas, é <strong>aritmética</strong>: <code>lea (%rdi,%rdi,4),%eax</code> = <code>a*5</code>, e <code>lea -2(%rsi),%rax</code> = <code>b - 2</code>.</li>
+<li>Se o resultado é usado depois como endereço (<code>mov (%rax)</code>), é cálculo de endereço (<code>&amp;v[i]</code>).</li>
+<li><code>lea</code> é a <strong>única</strong> instrução com a sintaxe <code>D(r1,r2,S)</code> que <strong>não</strong> acessa a memória.</li>
+</ul></div>
+
+<h2 id="condicionais">Flags, comparações e saltos</h2>
+<p>Toda operação aritmética seta as flags <strong>CF</strong> (carry, para unsigned), <strong>ZF</strong> (zero), <strong>SF</strong> (sinal) e <strong>OF</strong> (overflow, para signed). Há duas instruções que só setam flags:</p>
+<ul>
+<li><code>cmp b, a</code> calcula <code>a − b</code> e compara <strong>a com b</strong> (lê-se "o segundo em relação ao primeiro");</li>
+<li><code>test b, a</code> calcula <code>a &amp; b</code>. <code>test %rdi,%rdi</code> testa o sinal/zero de rdi, e <code>test $1,%dil</code> testa se é ímpar.</li>
+</ul>
+<div class="table-wrap"><table>
+<tr><th>Sufixo</th><th>Condição (após <code>cmp b,a</code>)</th><th>Tipo</th></tr>
+<tr><td><code>e</code> / <code>z</code></td><td><code>a == b</code></td><td>todos</td></tr>
+<tr><td><code>ne</code> / <code>nz</code></td><td><code>a != b</code></td><td>todos</td></tr>
+<tr><td><code>s</code> / <code>ns</code></td><td>resultado negativo / não negativo</td><td>signed</td></tr>
+<tr><td><code>g</code> / <code>ge</code></td><td><code>a &gt; b</code> / <code>a &gt;= b</code></td><td><strong>signed</strong></td></tr>
+<tr><td><code>l</code> / <code>le</code></td><td><code>a &lt; b</code> / <code>a &lt;= b</code></td><td><strong>signed</strong></td></tr>
+<tr><td><code>a</code> / <code>ae</code></td><td><code>a &gt; b</code> / <code>a &gt;= b</code> (above)</td><td><strong>unsigned</strong></td></tr>
+<tr><td><code>b</code> / <code>be</code></td><td><code>a &lt; b</code> / <code>a &lt;= b</code> (below)</td><td><strong>unsigned</strong></td></tr>
+</table></div>
+<p>Esses sufixos aparecem em três famílias:</p>
+<ul>
+<li><code>set*</code> grava 0/1 em um registrador de 1 byte (<code>sete %al</code>), geralmente seguido de <code>movzbl %al,%eax</code>;</li>
+<li><code>j*</code> salta se a condição valer;</li>
+<li><code>jmp</code> salta sempre (incondicional).</li>
+</ul>
+<p>Por isso o par <code>cmp/test</code> + <code>j*</code> vira <code>if (cond) goto label;</code>. Ver <code>seta/setb/ja/jbe</code> indica que os tipos são <strong>unsigned</strong>; ver <code>g/l</code> indica <strong>signed</strong>.</p>
+
+<h2 id="reversa">Algoritmo de engenharia reversa (Assembly → C)</h2>
+<ol>
+<li><strong>Assinatura:</strong> liste <code>%rdi, %rsi, %rdx, %rcx, %r8, %r9</code> e veja quais são <strong>lidos antes de serem escritos</strong>: esses são os argumentos.</li>
+<li><strong>Tipos:</strong> o tamanho do registrador e o <code>set*</code>/<code>j*</code> usado (signed ou unsigned) dão o tipo. Registrador de 64 bits usado com <code>(%reg)</code> é <strong>ponteiro</strong>. A escala do <code>D(r1,r2,S)</code> dá o tipo do elemento (S=4 é <code>int*</code>).</li>
+<li><strong>Retorno:</strong> o que fica em <code>%rax</code>/<code>%eax</code> antes do <code>ret</code>. Se nada é escrito em <code>%rax</code>, a função é <code>void</code>.</li>
+<li><strong>Nomeie</strong> cada registrador (um nome por tamanho diferente).</li>
+<li><strong>Traduza</strong> instrução por instrução para <strong>gotoC</strong> (<code>if (...) goto x;</code>).</li>
+<li><strong>Desenhe as setas</strong> dos saltos: um salto <em>para trás</em> é um <strong>loop</strong>, um salto <em>para frente</em> é um <strong>if/else</strong>.</li>
+<li><strong>Refatore</strong> para C legível. Lembre que o compilador inverte as condições e reordena blocos (o <code>else</code> pode vir primeiro, e <code>a &gt; 4</code> equivale a <code>a &gt;= 5</code>).</li>
+</ol>
+<div class="box tip"><span class="box-title">Confira compilando</span>
+<p><code>gcc -Og -g -Wall -std=c99 -c minha.c -o minha.o</code> e compare o <code>disas</code> com o original. A ferramenta <a href="https://godbolt.org/">godbolt.org</a> também ajuda. Referência de instruções: <a href="https://www.felixcloutier.com/x86/">felixcloutier.com/x86</a>.</p></div>
+
+<h3>Exemplo: aritmética</h3>
+<pre><code>misterio1:  add  %rsi,%rdi
+            lea  (%rdi,%rdx,2),%rax
+            ret</code></pre>
+<pre data-lang="c"><code>long misterio1(long a, long b, long c) { return a + b + 2*c; }</code></pre>
+<h3>Exemplo: if/else com expressões compostas</h3>
+<pre><code>cmp  $0x4,%rdi ; setg %dl       # dl = a &gt; 4
+test %rsi,%rsi ; setle %al      # al = b &lt;= 0
+test %al,%dl   ; jne  L1        # if (dl &amp;&amp; al) goto L1
+mov  %rdi,%rax ; sub %rsi,%rax ; ret     # return a - b
+L1: lea (%rdi,%rsi,1),%rax ; ret         # return a + b</code></pre>
+<pre data-lang="c"><code>long exemplo2(long a, long b) {
+    if (a &gt;= 5 &amp;&amp; b &lt;= 0) return a + b;
+    else return a - b;
+}</code></pre>
+<h3>Exemplo: loop (salto para trás)</h3>
+<pre><code>soma_2n:  mov $0x1,%eax
+          jmp L2
+L1:       shr %edi              # a = a &gt;&gt; 1
+          add $0x1,%eax         # res++
+L2:       cmp $0x1,%edi
+          ja  L1                # while (a &gt; 1) — unsigned!
+          ret</code></pre>
+<pre data-lang="c"><code>int soma_2n(unsigned int a) {
+    int res = 1;
+    while (a &gt; 1) { a = a / 2; res++; }
+    return res;
+}</code></pre>
+<h3>Exemplo: array</h3>
+<pre><code>soma:  mov $0,%edx ; mov $0,%eax ; jmp L2
+L1:    movslq %edx,%rcx               # i (int) -&gt; long para indexar
+       add (%rdi,%rcx,4),%eax         # res += vec[i]  (escala 4 =&gt; int*)
+       add $1,%edx                    # i++
+L2:    cmp %esi,%edx ; jl L1          # i &lt; n
+       ret</code></pre>
+<pre data-lang="c"><code>int soma(int *vec, int n) {
+    int res = 0;
+    for (int i = 0; i &lt; n; i++) res += vec[i];
+    return res;
+}</code></pre>
+<p>Índices <strong>constantes</strong> viram deslocamentos fixos: <code>mov $0, 0x28(%rdi)</code> é <code>v[5] = 0</code> num <code>long*</code> (5×8 = 40 = 0x28), e <code>movw $0x14, 0x4(%rdi)</code> é <code>v[2] = 20</code> num <code>short*</code>.</p>
+
+<h2 id="pilha">Variáveis locais, globais e strings</h2>
+<ul>
+<li><strong>Locais na pilha:</strong> a função começa com <code>sub $0x10,%rsp</code> (reserva 16 bytes) e termina com <code>add $0x10,%rsp</code>; essas duas instruções não têm equivalente em C. <strong>Todo deslocamento relativo a <code>%rsp</code> é uma variável local.</strong> Com <code>mov</code> é leitura/escrita; com <code>lea</code> é <code>&amp;local</code>. O compilador só coloca uma variável na pilha quando precisa do endereço dela (ex.: o <code>scanf</code>).</li>
+<li><strong>Globais e constantes:</strong> são acessadas relativas a <code>%rip</code>, como <code>mov 0x2ea1(%rip),%eax  # &lt;times_called&gt;</code>. O deslocamento muda de instrução para instrução, mas o endereço final é o mesmo, e o gdb mostra o endereço calculado no comentário. Strings em <code>.rodata</code> são só para leitura.</li>
+</ul>
+<pre><code>sub  $0x18,%rsp
+lea  0xc(%rsp),%rsi            # &amp;n
+lea  0xeab(%rip),%rdi          # "%d"   (x/s 0x2004)
+mov  $0,%eax
+call __isoc99_scanf@plt        # scanf("%d", &amp;n)
+cmpl $0,0xc(%rsp) ; js neg     # if (n &lt; 0)
+...</code></pre>
+<p>O <code>mov $0,%eax</code> antes de chamar funções variádicas (printf/scanf) indica que nenhum argumento é de ponto flutuante. <code>endbr64</code> é uma proteção de controle de fluxo e pode ser ignorado.</p>
+
+<h2 id="hackerlab">Hackerlab (Lab 1)</h2>
+<p>O executável <code>app</code> pede 10 senhas, uma por nível. Para cada nível:</p>
+<ol>
+<li><code>disas</code> na função do nível;</li>
+<li>ache as comparações e as chamadas (<code>strcmp</code>, <code>sscanf</code>, funções auxiliares);</li>
+<li>use <code>x/s</code> nos endereços das strings e coloque breakpoints antes das comparações;</li>
+<li>deduza a senha e coloque-a em <code>solucao.txt</code> (uma por linha).</li>
+</ol>
+<p>Teste com <code>./app &lt; solucao.txt</code>. Para entregar, crie a tag <code>lab1.x.y</code>. Cada nível vale 1,0.</p>
+</main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

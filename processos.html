@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Processos, fork, wait e exec — SisHard Resumo</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav id="sidebar"></nav>
+<main>
+<p class="kicker">Aulas 11 e 12 · <span class="badge af">cai na AF</span></p>
+<h1>Processos: fork, wait, exec</h1>
+<p class="lead">Como o Sistema Operacional cria, isola, espera e substitui programas em execução. É a base das questões de "integrar com outro executável" da Prova Final.</p>
+<div id="page-toc" class="page-toc"></div>
+
+<h2 id="so">Sistema Operacional, kernel e POSIX</h2>
+<p>O <strong>Sistema Operacional</strong> permite que um usuário execute vários programas de maneira "simultânea" e segura. Ele controla o acesso à memória, ao armazenamento e aos dispositivos, garantindo <em>isolamento</em>, <em>divisão do tempo de CPU</em> e <em>acesso concorrente</em> aos dispositivos.</p>
+<div class="table-wrap"><table>
+<tr><th>Conceito</th><th>O que é</th></tr>
+<tr><td><strong>Kernel</strong></td><td>Software do sistema que gerencia programas, memória e recursos de hardware. Roda com <strong>privilégios totais</strong> (anel 0 no x86). Grosso modo, é um conjunto de <em>handlers de interrupção</em>.</td></tr>
+<tr><td><strong>Processo de usuário</strong></td><td>Qualquer programa em execução. Roda com <strong>privilégios limitados</strong> (anel 3). A falha de um processo não afeta os outros. Para acessar hardware (memória, disco, rede, outros processos) faz <strong>chamadas de sistema</strong> ao kernel.</td></tr>
+<tr><td><strong>Syscall</strong></td><td>Pedido de um processo ao kernel (<code>fork</code>, <code>read</code>, <code>open</code>, <code>kill</code>...).</td></tr>
+<tr><td><strong>Interrupção</strong></td><td>Aviso do <em>hardware</em> ao kernel (disco terminou, pacote de rede, timer, teclado).</td></tr>
+<tr><td><strong>Sinal</strong></td><td>Aviso do kernel a um <em>processo</em> ("exceção de software"). Ver <a href="sinais.html">Sinais</a>.</td></tr>
+<tr><td><strong>POSIX</strong></td><td>Família de padrões IEEE que define a API do SO (usuários e grupos, arquivos e permissões, processos, comunicação entre processos, acesso a drivers). Linux e macOS são POSIX; código POSIX é compatível <strong>em nível de código-fonte</strong>. Cabeçalho principal: <code>&lt;unistd.h&gt;</code>. No Windows há a API própria (WINE traduz Windows→POSIX; Cygwin implementa POSIX sobre Windows).</td></tr>
+</table></div>
+<p>Um <strong>sistema de computação</strong> combina hardware + SO, é de uso geral e reprogramável. Uma calculadora não é (sem armazenamento secundário, não é de uso geral); um microcontrolador também não (não tem SO).</p>
+
+<h2 id="contexto">Processo, contexto e troca de contexto</h2>
+<p>Um processo dá ao programa duas ilusões:</p>
+<ul>
+<li><strong>Fluxo de controle lógico</strong>: parece ter a CPU só para ele, graças à <strong>troca de contexto</strong> (context switch).</li>
+<li><strong>Espaço de endereçamento privado</strong>: parece ter a memória só para ele (Stack, Heap, Data, Code), graças à <strong>memória virtual</strong>.</li>
+</ul>
+<p>Na realidade, os processos são <strong>intercalados</strong>. Numa troca de contexto o kernel:</p>
+<ol>
+<li>grava os registradores do processo atual na memória;</li>
+<li>escolhe o próximo processo (escalonador);</li>
+<li>carrega os registradores salvos dele e troca o espaço de endereçamento.</li>
+</ol>
+<p>O <strong>contexto de execução</strong> é tudo o que precisa ser salvo e restaurado: registradores, memória e estado. Em processadores multicore cada core roda um processo, e o kernel decide qual roda em qual core.</p>
+<h3>Ciclo de vida</h3>
+<p>Um processo alterna entre <strong>rodando</strong>, <strong>pronto</strong> (esperando a CPU) e <strong>bloqueado</strong> (esperando E/S). Ele sai de "rodando" por:</p>
+<ul>
+<li>fim do <strong>tempo limite</strong> de execução (preempção pelo timer), indo para pronto;</li>
+<li>uma <strong>chamada de sistema</strong> que espera hardware (ex.: <code>read</code>), indo para bloqueado;</li>
+<li>a <strong>interrupção</strong> do dispositivo que o devolve de bloqueado para pronto.</li>
+</ul>
+<p>O fluxo de controle muda por saltos/<code>call</code>/<code>ret</code> (dentro do programa) e por <strong>exceções/interrupções/sinais</strong> (eventos do sistema: dados do disco, divisão por zero, Ctrl+C, timer).</p>
+
+<h2 id="fork">fork: criando processos</h2>
+<pre data-lang="c"><code>#include &lt;unistd.h&gt;
+#include &lt;sys/types.h&gt;
+
+pid_t fork(void);      // cria um CLONE do processo atual
+pid_t getpid(void);    // meu pid
+pid_t getppid(void);   // pid do meu pai</code></pre>
+<div class="box def"><span class="box-title">Regra de ouro</span>
+<p><code>fork</code> <strong>retorna duas vezes</strong>:</p>
+<ul>
+<li>no <strong>pai</strong>, retorna o <strong>pid do filho</strong> (&gt; 0);</li>
+<li>no <strong>filho</strong>, retorna <strong>0</strong>;</li>
+<li>em caso de erro, retorna <strong>-1</strong>.</li>
+</ul>
+<p>Os dois continuam executando <em>a partir da linha seguinte ao fork</em>, cada um com <strong>sua própria cópia da memória</strong>: mudar uma variável num deles não muda no outro.</p></div>
+<pre data-lang="c"><code>pid_t pai, filho;
+int variavel = 5;
+filho = fork();
+if (filho == 0) {
+    // FILHO
+    pai = getppid();
+    filho = getpid();
+    variavel *= 2;
+    printf("filho %d, pai %d, variavel %d\n", filho, pai, variavel);   // 10
+} else {
+    // PAI
+    pai = getpid();
+    printf("pai %d, filho %d, variavel %d\n", pai, filho, variavel);   // 5
+}</code></pre>
+<div class="box trap"><span class="box-title">Pegadinhas</span>
+<ul>
+<li><strong>Memória separada:</strong> um <code>while (rodando)</code> no pai <strong>nunca termina</strong> se só o filho faz <code>rodando = 0</code>. Para esperar o filho, use <code>wait</code>.</li>
+<li><strong>Ordem de execução:</strong> não é possível saber quem roda primeiro (o escalonador decide). Isso muda só a <em>ordem dos prints</em>, não os valores.</li>
+<li><strong>Filho que continua o loop:</strong> num <code>for</code> que faz <code>fork</code>, o filho também continua o laço e cria "netos". Para N filhos diretos, o filho precisa sair (<code>exit</code>/<code>return</code>/<code>break</code>) dentro do <code>if (pid == 0)</code>.</li>
+<li><strong>Buffer do printf:</strong> o buffer de <code>stdout</code> é copiado no fork. Um <code>printf</code> sem <code>\n</code> antes do fork pode aparecer duas vezes. Dê <code>fflush(stdout)</code> ou termine com <code>\n</code>.</li>
+</ul></div>
+
+<h3>Criar N filhos numerados (exercício da aula 11)</h3>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/wait.h&gt;
+
+int main() {
+    int id = 0;                    // 0 = pai
+    for (int i = 1; i &lt;= 8; i++) {
+        pid_t p = fork();
+        if (p == 0) {              // filho: guarda seu id e SAI do laço
+            id = i;
+            break;
+        }
+    }
+    if (id == 0) {
+        printf("Eu sou o processo pai, pid=%d, meu id do programa é %d\n", getpid(), id);
+        for (int i = 0; i &lt; 8; i++) wait(NULL);   // espera os 8
+    } else {
+        printf("Eu sou um processo filho, pid=%d, ppid=%d, meu id do programa é %d\n",
+               getpid(), getppid(), id);
+    }
+    return 0;
+}</code></pre>
+
+<h3 id="contar">Contando processos em forks encadeados</h3>
+<p>Cada <code>fork()</code> executado por <em>k</em> processos gera mais <em>k</em> processos. Com <em>n</em> forks em sequência (sem <code>if</code>), o total é <strong>2<sup>n</sup></strong> processos, contando o original.</p>
+<pre data-lang="c"><code>fork();          // 2 processos
+fork();          // 4 processos
+printf("oi\n");  // impresso 4 vezes</code></pre>
+<p>Com <code>if</code>, desenhe a <strong>árvore</strong>: em cada fork, um ramo "pai" (retorno &gt; 0) e um ramo "filho" (retorno 0). Na questão de revisão da aula 20 (<code>f1 = fork(); f2 = fork();</code>) há <strong>4 processos</strong>. Os valores (<code>f1</code>, <code>f2</code>) identificam quem é quem:</p>
+<ul>
+<li><code>f1≠0, f2≠0</code>: o original;</li>
+<li><code>f1≠0, f2=0</code>: o 2º filho do original;</li>
+<li><code>f1=0, f2≠0</code>: o 1º filho;</li>
+<li><code>f1=0, f2=0</code>: o neto.</li>
+</ul>
+<div class="box exam"><span class="box-title">Como julgar "essa saída é possível?"</span>
+<p>Uma saída é <strong>impossível</strong> se viola uma relação de <em>causa → efeito</em>:</p>
+<ul>
+<li>um processo imprime algo <strong>antes de existir</strong> (o filho só existe depois do fork do pai);</li>
+<li>a ordem dos prints de <strong>um mesmo processo</strong> está trocada;</li>
+<li>um pai que faz <code>wait</code> imprime "fim" <strong>antes</strong> do fim do filho;</li>
+<li>os pids não batem com a árvore (o filho de 138 aparecendo como filho de 137, um pid de filho igual a 0 impresso pelo pai).</li>
+</ul>
+<p>Prints de processos <em>diferentes</em> sem dependência podem vir em qualquer ordem. Explique <strong>por quê</strong>; não basta apontar a diferença para um teste.</p></div>
+
+<h2 id="wait">wait e waitpid: esperando filhos</h2>
+<pre data-lang="c"><code>#include &lt;sys/types.h&gt;
+#include &lt;sys/wait.h&gt;
+
+pid_t wait(int *wstatus);                            // espera QUALQUER filho
+pid_t waitpid(pid_t pid, int *wstatus, int options); // espera um filho específico</code></pre>
+<ul>
+<li>Bloqueiam até um filho terminar e <strong>retornam o pid</strong> de quem terminou (-1 se não há filhos).</li>
+<li>O status de término vem em <code>*wstatus</code> (pode passar <code>NULL</code> se não interessar).</li>
+<li><code>waitpid(pid, &amp;st, 0)</code> espera aquele filho. <code>waitpid(-1, &amp;st, 0)</code> equivale a <code>wait(&amp;st)</code>.</li>
+<li><code>waitpid(pid, &amp;st, <strong>WNOHANG</strong>)</code> <strong>não bloqueia</strong>: retorna <code>0</code> se o filho ainda está rodando e o pid se já terminou. Serve para "só mandar o sinal se o filho ainda estiver vivo".</li>
+</ul>
+<h3 id="macros">Macros para ler o wstatus</h3>
+<div class="table-wrap"><table>
+<tr><th>Macro</th><th>Significado</th></tr>
+<tr><td><code>WIFEXITED(st)</code></td><td>Verdadeiro se o filho terminou <strong>normalmente</strong> (<code>return</code> do main ou <code>exit</code>).</td></tr>
+<tr><td><code>WEXITSTATUS(st)</code></td><td>O valor retornado pelo main (só os <strong>8 bits menos significativos</strong>: 0..255). Use só se <code>WIFEXITED</code>.</td></tr>
+<tr><td><code>WIFSIGNALED(st)</code></td><td>Verdadeiro se o filho foi <strong>terminado por um sinal</strong> (Ctrl+C, SIGSEGV, divisão por zero, kill...).</td></tr>
+<tr><td><code>WTERMSIG(st)</code></td><td>Número do sinal que matou o filho. Use <code>strsignal(sig)</code> (<code>&lt;string.h&gt;</code>) para obter o nome legível.</td></tr>
+</table></div>
+<pre data-lang="c"><code>int wst;
+pid_t quem = wait(&amp;wst);
+if (WIFEXITED(wst)) {
+    printf("%d terminou normal, retorno %d\n", quem, WEXITSTATUS(wst));
+} else if (WIFSIGNALED(wst)) {
+    printf("%d morreu pelo sinal %d (%s)\n", quem, WTERMSIG(wst), strsignal(WTERMSIG(wst)));
+}</code></pre>
+<div class="box trap"><span class="box-title">Pegadinha clássica: retorno negativo</span>
+<p>Se o filho faz <code>return -1</code>, <code>WEXITSTATUS</code> devolve <strong>255</strong> (só 8 bits, sem sinal). Para recuperar o <code>-1</code>, faça o cast: <code>int ret = (char) WEXITSTATUS(wst);</code> (dica que apareceu no simulado oficial). Do mesmo jeito, <code>return 256</code> vira 0.</p></div>
+<p><strong>Zumbi e órfão:</strong> um filho que terminou e ainda não foi esperado vira <em>zumbi</em> (a entrada dele continua na tabela de processos até o <code>wait</code>). Por isso o pai deve sempre esperar os filhos. Um filho cujo pai morreu vira <em>órfão</em> e é adotado pelo <code>init</code>/<code>systemd</code> (pid 1), e o <code>getppid()</code> dele muda.</p>
+
+<h2 id="args">Argumentos do programa: argc e argv</h2>
+<pre data-lang="c"><code>int main(int argc, char *argv[]) {
+    for (int i = 0; i &lt; argc; i++) printf("arg: %s\n", argv[i]);
+}
+// $ ./exemplo-args teste var bla foo
+// argc = 5, argv = {"./exemplo-args", "teste", "var", "bla", "foo"}  (argv[argc] == NULL)</code></pre>
+<ul>
+<li><code>argv[0]</code> é o <strong>nome do programa</strong> chamado. <code>argc</code> conta ele também.</li>
+<li>Os argumentos são <strong>strings</strong>. Para converter, use <code>atoi</code>/<code>atol</code> (inteiro), <code>atof</code> (double) ou <code>strtol</code> (com detecção de erro). Um texto que não é número vira 0 com <code>atoi</code>/<code>atof</code>.</li>
+<li>Valide <code>argc</code> logo no início e mostre a mensagem de uso ("USAGE: ...") se estiver errado.</li>
+</ul>
+
+<h2 id="exec">exec: carregando outro programa</h2>
+<p><code>fork</code> só cria clones. Para rodar <em>outro</em> programa usamos a família <strong>exec</strong>, que <strong>carrega o programa do disco no contexto do processo atual, substituindo-o por completo</strong> (código, dados, pilha). O pid continua o mesmo.</p>
+<pre data-lang="c"><code>#include &lt;unistd.h&gt;
+int execvp(const char *file, char *const argv[]);
+
+char prog[] = "ls";
+char *args[] = {"ls", "-l", "-a", NULL};   // começa com o nome, TERMINA com NULL
+execvp(prog, args);
+printf("Fim do exec!\n");   // SÓ executa se o execvp FALHAR</code></pre>
+<div class="box def"><span class="box-title">Regras do exec</span>
+<ul>
+<li><strong>Nunca retorna</strong> se der certo. Se retornar, deu erro (retorna -1): trate com <code>perror("execvp"); exit(1);</code>.</li>
+<li>O vetor de argumentos vira o <code>argv</code> do novo <code>main</code>. <code>{"prog1","arg1","arg2",NULL}</code> gera <strong>argc = 3</strong> (o NULL não conta).</li>
+<li><code>execvp</code>: o <strong>v</strong> indica vetor de argumentos e o <strong>p</strong> indica que o programa é procurado no <code>PATH</code>. Para um executável da pasta atual, use <code>"./siscoin"</code>.</li>
+<li>Variantes: <code>execl/execlp</code> (lista de argumentos), <code>execv</code> (sem PATH), <code>execve</code> (com variáveis de ambiente).</li>
+<li>Na prova, <strong>não pode usar <code>system()</code></strong>. O padrão é fork + exec + wait.</li>
+</ul></div>
+
+<h2 id="padrao">Padrão fork + exec + wait (com retry)</h2>
+<p>Este é o modelo da questão do <strong>SisCoin</strong> do simulado: chamar um executável repetidamente até ele dar certo.</p>
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/wait.h&gt;
+
+int main(int argc, char *argv[]) {
+    if (argc != 4) { printf("USO: ./q2 &lt;origem&gt; &lt;destino&gt; &lt;valor&gt;\n"); return 1; }
+    int ret;
+    int wst;
+    do {
+        pid_t filho = fork();
+        if (filho == 0) {
+            char *args[] = {"./siscoin", argv[1], argv[2], argv[3], NULL};
+            execvp(args[0], args);
+            perror("execvp");          // só chega aqui se falhar
+            exit(1);
+        }
+        waitpid(filho, &amp;wst, 0);
+        if (WIFEXITED(wst)) {
+            ret = (char) WEXITSTATUS(wst);   // recupera -1
+            printf("siscoin retornou %d\n", ret);
+        } else {
+            ret = 1;                          // morreu por sinal: tenta de novo
+        }
+    } while (ret &gt; 0);   // 1..4 = falha de rede -&gt; repete; 0 = ok; -1 = erro de parâmetro
+    return 0;
+}</code></pre>
+
+<h2 id="paralelo">Vários processos em paralelo (lab do web_downloader)</h2>
+<p>No Lab de Processos, o <code>web_downloader</code> baixa cada URL num <strong>processo separado</strong>. Os conceitos vão subindo:</p>
+<ul>
+<li><strong>C:</strong> lê as URLs com <code>-f</code>, faz um fork por URL e mostra "{url} baixada com sucesso!".</li>
+<li><strong>B:</strong> o pai espera todos e mantém no máximo <strong>N processos</strong> (<code>-N</code>, padrão 4), ou seja, no máximo N+1 contando o original.</li>
+<li><strong>A:</strong> mensagens sem embaralhar, Ctrl+C pergunta se quer sair (mata os filhos e apaga os arquivos parciais), mensagem quando o download falha.</li>
+</ul>
+<pre data-lang="c"><code>// Limitar a N filhos simultâneos: conte os ativos; ao chegar em N, espere um terminar.
+int ativos = 0;
+for (int i = 0; i &lt; n_urls; i++) {
+    if (ativos == N) { wait(NULL); ativos--; }
+    pid_t p = fork();
+    if (p == 0) { baixa(urls[i]); exit(0); }
+    ativos++;
+}
+while (ativos &gt; 0) { wait(NULL); ativos--; }   // espera os que sobraram</code></pre>
+<p>O nome do arquivo de saída segue a regra do lab: ignora <code>http://</code> e <code>https://</code> e troca barras e pontos (exceto o último) por <code>_</code>. Assim, <code>http://exemplo.com/pagina.html</code> vira <code>exemplo_com_pagina.html</code>.</p>
+
+<h2 id="resumo">Resumo relâmpago</h2>
+<ul>
+<li><code>fork()</code> retorna 0 no filho, o pid do filho no pai e -1 em erro. A memória é copiada, não compartilhada.</li>
+<li><code>wait(&amp;st)</code> e <code>waitpid(pid,&amp;st,opt)</code> bloqueiam e devolvem o pid. <code>WNOHANG</code> não bloqueia.</li>
+<li>Para ler o status: <code>WIFEXITED</code>/<code>WEXITSTATUS</code> (cast <code>(char)</code> para negativos) e <code>WIFSIGNALED</code>/<code>WTERMSIG</code> (+ <code>strsignal</code>).</li>
+<li><code>execvp(nome, args)</code> com <code>args[0]</code> = nome e o último elemento <code>NULL</code>. Só retorna em erro.</li>
+<li>Includes: <code>&lt;unistd.h&gt;</code>, <code>&lt;sys/types.h&gt;</code>, <code>&lt;sys/wait.h&gt;</code>, <code>&lt;stdlib.h&gt;</code>, <code>&lt;string.h&gt;</code>.</li>
+<li>Consulte sempre: <code>man 2 fork</code>, <code>man 2 wait</code>, <code>man 3 execvp</code>, <code>man 3 strsignal</code>. <em>If in doubt, then man!</em></li>
+</ul>
+</main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>
