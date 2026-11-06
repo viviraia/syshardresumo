@@ -120,6 +120,10 @@ ul, ol { padding-left: 24px; }
 li { margin: 3px 0; }
 strong { font-weight: 650; }
 
+code, pre {
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
 code {
   font-family: var(--mono); font-size: 0.86em;
   background: var(--inline-code); padding: 1px 5px; border-radius: 4px;
@@ -286,13 +290,33 @@ details.answer > summary { color: var(--green); }
 
 /* ---------- impressão ---------- */
 @media print {
-  #sidebar, .menu-toggle, .copy-btn, .timer-bar, .tools { display: none !important; }
+  /* sempre claro na impressão/PDF, mesmo com o modo escuro ativo */
+  :root, [data-theme="dark"] {
+    --bg: #fff; --paper: #fff; --ink: #111; --muted: #555; --line: #ccc;
+    --accent: #b23a0a; --accent-soft: #fff4ec; --blue: #1d4ed8; --blue-soft: #eef3ff;
+    --green: #166534; --green-soft: #effaf2; --red: #a11a1a; --red-soft: #fff1f1;
+    --purple: #6b21a8; --purple-soft: #f8f0ff; --inline-code: #f1f1f1;
+  }
+  @page { size: A4; margin: 14mm 12mm; }
+  #sidebar, .menu-toggle, .copy-btn, .timer-bar, .tools, .no-print, .page-toc { display: none !important; }
+  .layout { display: block; }
   main { padding: 0; max-width: none; }
-  body { background: #fff; color: #000; font-size: 12pt; }
-  pre { background: #f4f4f4; color: #000; border: 1px solid #ccc; white-space: pre-wrap; }
-  pre .c, pre .k, pre .s, pre .f { color: #000; }
+  body { background: #fff; color: #111; font-size: 10.5pt; line-height: 1.45; }
+  h1 { font-size: 20pt; }
+  h2 { font-size: 14pt; margin-top: 18pt; break-after: avoid; }
+  pre { background: #f7f7f7; color: #111; border: 1px solid #ccc; white-space: pre-wrap; word-break: break-word;
+        font-size: 8.6pt; line-height: 1.35; padding: 8px 10px; }
+  pre[data-lang]::before { display: none; }
+  pre .c { color: #4b5563; font-style: italic; }
+  pre .k { color: #9a3412; font-weight: 600; }
+  pre .s { color: #166534; }
+  pre .f { color: #1e40af; }
+  a { color: inherit; text-decoration: none; }
   details { border: 0; }
   details > .details-body { display: block !important; }
-  h2 { break-after: avoid; }
-  pre, .box, table { break-inside: avoid; }
+  .box, table, tr { break-inside: avoid; }
+  pre { break-inside: auto; }
+  .table-wrap { overflow: visible; }
+  table { font-size: 9pt; }
+  td code { white-space: normal; word-break: break-word; }
 }

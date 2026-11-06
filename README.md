@@ -15,6 +15,7 @@ Resumo completo de **Sistemas Hardware-Software (Insper, Ciência da Computaçã
 | `semaforos.html` | Semáforos POSIX, Rendez-vous, diagrama de dependências, barreira, limite de N, produtor-consumidor |
 | `parte1-assembly.html` | 1ª metade: inteiros, memória, structs, x86-64, gdb e engenharia reversa |
 | `cola.html` | Consulta rápida para a prova: includes, modelos de código e erros comuns |
+| `cola.pdf` | A mesma cola em PDF (A4), pronta para baixar ou imprimir |
 | `prova.html` | **Prova modelo**: 4 questões práticas no estilo da AF (com rubrica e gabarito) e um quiz com correção automática |
 
 A pasta `prova/` tem os arquivos-base (`q1.c` a `q4.c`, `instavel.c`, `numeros.txt`), e a pasta `prova/gabarito/` tem as soluções.
@@ -26,6 +27,12 @@ O site é estático (HTML, CSS e JS puros, sem build). Para usar:
 
 - **Localmente:** abra o `index.html` no navegador.
 - **Online:** ative o GitHub Pages em *Settings → Pages → Deploy from a branch*, escolhendo a branch e a pasta `/ (root)`.
+
+Se você alterar a `cola.html`, gere o PDF de novo (precisa do Playwright com Chromium):
+
+```bash
+node scripts/gerar-pdf-cola.js
+```
 
 Para treinar a prova:
 
