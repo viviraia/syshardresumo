@@ -12,19 +12,63 @@
 <main>
 <p class="kicker">Consulta rápida · <span class="badge af">AF</span></p>
 <h1>Cola para a prova</h1>
-<p class="lead">A AF é <strong>com consulta</strong> aos materiais (e sem IA). Deixe esta página aberta: tem os includes, as assinaturas, os modelos prontos para adaptar e os erros que mais tiram ponto.</p>
+<p class="lead"><strong>Todas as linhas dos modelos estão comentadas</strong>: o comentário fica logo acima da linha que ele explica. A AF é <strong>com consulta</strong> aos materiais (e sem IA). Deixe esta página aberta: tem os includes, as assinaturas, os modelos prontos para adaptar e os erros que mais tiram ponto.</p>
 <div id="page-toc" class="page-toc"></div>
 
 <h2 id="compilar">Compilar, rodar e testar</h2>
-<pre><code>gcc -Wall -g q1.c -o q1 -pthread           # threads/semáforos: -pthread
-gcc -Wall -g q2.c -o q2                    # processos
-valgrind --leak-check=full ./q4 2 arq.txt  # tem que dar "0 errors" e "All heap blocks were freed"
-./q3 &amp;                                     # roda em background e mostra o pid
-kill -s SIGINT &lt;pid&gt;   ;   kill -USR1 &lt;pid&gt;   ;   kill -9 &lt;pid&gt;
-echo $?  ;  kill -l $?                     # código de saída / sinal que matou
-time ./q4 2 arq.txt                        # mede tempo (confere o limite de threads)
-for i in $(seq 20); do ./q1 | tr -d '\n'; echo; done   # roda 20x para ver ordens diferentes
-man 2 fork | man 2 wait | man 3 execvp | man 2 open | man 2 read | man 7 signal | man 2 sigaction | man sem_overview | man 3 pthread_create</code></pre>
+<pre><code># ---------- COMPILAR ----------
+# -Wall: mostra todos os avisos do compilador
+# -g: inclui informações de debug (necessário para gdb e valgrind apontarem linhas)
+# -o q1: nome do executável gerado
+# -pthread: obrigatório para threads e semáforos
+gcc -Wall -g q1.c -o q1 -pthread
+# processos, arquivos e sinais não precisam de -pthread
+gcc -Wall -g q2.c -o q2
+
+# ---------- MEMÓRIA ----------
+# roda o programa sob o valgrind; o objetivo é "ERROR SUMMARY: 0 errors" e "All heap
+# blocks were freed"
+valgrind --leak-check=full ./q4 2 arq.txt
+
+# ---------- SINAIS ----------
+# roda em background (o &amp; devolve o terminal) e mostra o pid do processo
+./q3 &amp;
+# envia SIGINT (o mesmo que o Ctrl+C) ao processo &lt;pid&gt;
+kill -s SIGINT &lt;pid&gt;
+# envia SIGUSR1
+kill -USR1 &lt;pid&gt;
+# envia SIGKILL (9): mata na hora, não pode ser capturado
+kill -9 &lt;pid&gt;
+# código de saída do último comando (130 = morreu por SIGINT, 128 + 2)
+echo $?
+# traduz o código de saída no nome do sinal (ex.: INT)
+kill -l $?
+
+# ---------- TEMPO E REPETIÇÃO ----------
+# mede o tempo total (serve para conferir o limite de threads simultâneas)
+time ./q4 2 arq.txt
+# roda 20 vezes, cada execução numa linha só, para ver as ordens possíveis
+for i in $(seq 20); do ./q1 | tr -d '\n'; echo; done
+
+# ---------- MANUAIS (em caso de dúvida, use o man) ----------
+# seção 2 = chamadas de sistema
+man 2 fork
+# wait, waitpid e as macros WIFEXITED etc.
+man 2 wait
+# seção 3 = funções da biblioteca
+man 3 execvp
+# flags O_* e mode
+man 2 open
+# o que read retorna (0 = EOF)
+man 2 read
+# lista de sinais e seus números
+man 7 signal
+# struct sigaction
+man 2 sigaction
+# visão geral dos semáforos POSIX
+man sem_overview
+# pthread_create e seus argumentos
+man 3 pthread_create</code></pre>
 
 <h2 id="includes">Includes por assunto</h2>
 <div class="table-wrap"><table>
@@ -39,197 +83,382 @@ man 2 fork | man 2 wait | man 3 execvp | man 2 open | man 2 read | man 7 signal 
 </table></div>
 
 <h2 id="t-proc">Modelo: fork + execvp + waitpid (com retry)</h2>
-<pre data-lang="c"><code>#include &lt;stdio.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;string.h&gt;
-#include &lt;unistd.h&gt;
-#include &lt;sys/types.h&gt;
-#include &lt;sys/wait.h&gt;
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;        // printf, perror
+#include &lt;stdlib.h&gt;       // exit
+#include &lt;string.h&gt;       // strsignal (nome legível do sinal)
+#include &lt;unistd.h&gt;       // fork, execvp
+#include &lt;sys/types.h&gt;    // tipo pid_t
+#include &lt;sys/wait.h&gt;     // waitpid e as macros WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG
 
+// argc = quantos argumentos; argv = os argumentos (strings)
 int main(int argc, char *argv[]) {
-    if (argc != 3) { printf("USO: %s &lt;a&gt; &lt;b&gt;\n", argv[0]); return 1; }
+    // esperamos o nome do programa + 2 argumentos
+    if (argc != 3) {
+        // argv[0] é o nome do próprio programa
+        printf("USO: %s &lt;a&gt; &lt;b&gt;\n", argv[0]);
+        // sai indicando erro
+        return 1;
+    }
+    // começa &gt; 0 para entrar no laço pela primeira vez
     int ret = 1;
+    // repete enquanto houver falha temporária (retorno &gt; 0)
     while (ret &gt; 0) {
+        // clona o processo: retorna 0 no filho e o pid do filho no pai
         pid_t filho = fork();
+        // ---- só o FILHO entra aqui ----
         if (filho == 0) {
+            // argv do novo programa: nome primeiro, NULL no fim
             char *args[] = {"./programa", argv[1], argv[2], NULL};
+            // troca este processo pelo ./programa (não retorna se der certo)
             execvp(args[0], args);
+            // só chega aqui se o exec FALHOU: mostra o motivo
             perror("execvp");
+            // encerra o filho para ele não continuar o laço
             exit(1);
         }
+        // ---- PAI: variável que recebe o status de término ----
         int wst;
+        // bloqueia até ESSE filho terminar (0 = sem opções)
         waitpid(filho, &amp;wst, 0);
+        // o filho terminou normalmente (return/exit)?
         if (WIFEXITED(wst)) {
-            ret = (char) WEXITSTATUS(wst);      // (char) recupera retornos negativos
+            // pega o valor de retorno; o (char) transforma 255 de volta em -1
+            ret = (char) WEXITSTATUS(wst);
+            // mostra o retorno
             printf("retornou %d\n", ret);
+        // ou o filho foi morto por um sinal?
         } else if (WIFSIGNALED(wst)) {
+            // número e nome do sinal
             printf("morreu com sinal %d (%s)\n", WTERMSIG(wst), strsignal(WTERMSIG(wst)));
-            ret = 1;                            // tenta de novo
+            // trata como falha e tenta de novo
+            ret = 1;
         }
+    // sai do laço com ret == 0 (sucesso) ou ret &lt; 0 (erro de parâmetro)
     }
+    // fim do pai
     return 0;
 }</code></pre>
 
 <h2 id="t-sinal">Modelo: handler que salva em arquivo e termina pelo sinal</h2>
-<pre data-lang="c"><code>#include &lt;stdio.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;unistd.h&gt;
-#include &lt;signal.h&gt;
-#include &lt;fcntl.h&gt;
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;        // printf, snprintf, perror
+#include &lt;stdlib.h&gt;       // exit
+#include &lt;unistd.h&gt;       // getpid, write, close, usleep
+#include &lt;signal.h&gt;       // sigaction, sigemptyset, sigaddset, raise, SIG_DFL
+#include &lt;fcntl.h&gt;        // open e as flags O_WRONLY, O_CREAT, O_TRUNC
 
-long estado = 0;                                  // global!
+// GLOBAL: o handler só enxerga variáveis globais
+long estado = 0;
 
+// grava "estado" em estado.txt, como texto
 void salva(void) {
+    // abre para escrita, cria se não existir, apaga o conteúdo antigo; 0644 =
+    // rw-r--r--
     int fd = open("estado.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    // open retorna -1 em erro: mostra o motivo e desiste
     if (fd == -1) { perror("open"); return; }
+    // buffer para o número convertido em texto
     char buf[64];
+    // converte o long em texto; n = quantidade de caracteres gerados
     int n = snprintf(buf, sizeof(buf), "%ld\n", estado);
+    // escreve exatamente n bytes no arquivo
     write(fd, buf, n);
+    // fecha o arquivo (libera o fd)
     close(fd);
 }
 
+// handler: assinatura obrigatória void f(int); sig = número do sinal recebido
 void handler(int sig) {
+    // salva o estado no arquivo
     salva();
+    // avisa na tela
     printf("salvo: %ld\n", estado);
-    struct sigaction d;                           // termina "de verdade" por SIGINT
+    // nova configuração para o SIGINT
+    struct sigaction d;
+    // SIG_DFL = comportamento padrão (terminar o processo)
     d.sa_handler = SIG_DFL;
+    // sem opções especiais
     d.sa_flags = 0;
+    // nenhum sinal extra bloqueado
     sigemptyset(&amp;d.sa_mask);
+    // aplica: o próximo SIGINT vai matar o processo
     sigaction(SIGINT, &amp;d, NULL);
+    // envia SIGINT para si mesmo e morre "de verdade" pelo sinal ($? = 130)
     raise(SIGINT);
 }
 
 int main(void) {
+    // mostra o pid para podermos usar kill de outro terminal
     printf("PID: %d\n", getpid());
+    // configuração do handler
     struct sigaction s;
+    // função que vai rodar quando o sinal chegar
     s.sa_handler = handler;
+    // sem opções especiais
     s.sa_flags = 0;
+    // começa com a máscara vazia (é obrigatório inicializar)
     sigemptyset(&amp;s.sa_mask);
-    sigaddset(&amp;s.sa_mask, SIGTERM);               // opcional: bloqueia SIGTERM no handler
+    // opcional: bloqueia SIGTERM enquanto o handler roda
+    sigaddset(&amp;s.sa_mask, SIGTERM);
+    // registra o handler para SIGINT (registre ANTES do laço)
     sigaction(SIGINT, &amp;s, NULL);
-    while (1) { estado++; usleep(1000); }
+    // laço infinito simulando trabalho
+    while (1) {
+        // atualiza o estado
+        estado++;
+        // dorme 1 ms (1000 microssegundos)
+        usleep(1000);
+    }
 }</code></pre>
 
 <h2 id="t-readline">Modelo: read_line com read (tamanho arbitrário)</h2>
-<pre data-lang="c"><code>char *read_line(int fd) {
-    int cap = 16, len = 0, lidos;
+<pre data-lang="c"><code>// devolve a próxima linha de fd (sem o \n) ou NULL no fim do arquivo
+char *read_line(int fd) {
+    // capacidade atual do buffer (bytes alocados)
+    int cap = 16;
+    // quantos caracteres já foram guardados
+    int len = 0;
+    // retorno do read: 1 = leu um byte, 0 = EOF, -1 = erro
+    int lidos;
+    // aloca o buffer inicial no heap
     char *buf = malloc(cap);
+    // guarda o byte lido
     char c;
+    // lê 1 byte por vez enquanto houver dados
     while ((lidos = read(fd, &amp;c, 1)) &gt; 0) {
+        // fim da linha: para (o \n não é guardado)
         if (c == '\n') break;
-        if (len + 1 &gt;= cap) { cap *= 2; buf = realloc(buf, cap); }
+        // sem espaço para mais um char + o '\0'?
+        if (len + 1 &gt;= cap) {
+            // dobra a capacidade
+            cap *= 2;
+            // realoca: aceita linhas de qualquer tamanho
+            buf = realloc(buf, cap);
+        }
+        // guarda o char e avança a posição
         buf[len++] = c;
     }
-    if (lidos &lt;= 0 &amp;&amp; len == 0) { free(buf); return NULL; }
+    // chegou ao EOF (ou erro) sem ler nada: não há mais linhas
+    if (lidos &lt;= 0 &amp;&amp; len == 0) {
+        // libera o buffer não usado (o valgrind cobra)
+        free(buf);
+        // avisa quem chamou que o arquivo acabou
+        return NULL;
+    }
+    // termina a string (read não coloca o '\0')
     buf[len] = '\0';
+    // devolve a linha; quem chamou deve dar free()
     return buf;
 }</code></pre>
 
 <h2 id="t-threads">Modelo: N threads, struct por thread, limite por semáforo e mutex</h2>
-<pre data-lang="c"><code>#include &lt;stdio.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;pthread.h&gt;
-#include &lt;semaphore.h&gt;
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;        // printf
+#include &lt;stdlib.h&gt;       // malloc, free, atoi
+#include &lt;pthread.h&gt;      // pthread_create, pthread_join, mutex
+#include &lt;semaphore.h&gt;    // sem_t, sem_init, sem_wait, sem_post, sem_destroy
 
+// tudo o que cada thread recebe (um bloco por thread, no heap)
 typedef struct {
+    // número da thread
     int id;
+    // dado de entrada
     int entrada;
-    int res;                     // saída
+    // saída: a thread escreve o resultado aqui
+    int res;
+    // ponteiro para o semáforo compartilhado (nunca uma cópia!)
     sem_t *limite;
+    // ponteiro para o mutex compartilhado
     pthread_mutex_t *mutex;
 } t_arg;
 
+// variável global compartilhada (precisa de mutex)
 long total = 0;
 
+// assinatura obrigatória de thread: void *f(void *)
 void *tarefa(void *_arg) {
+    // converte o void* para o tipo real do argumento
     t_arg *a = _arg;
-    sem_wait(a-&gt;limite);         // entra (no máx. K ao mesmo tempo)
-    a-&gt;res = a-&gt;entrada * 2;     // trabalho
-    sem_post(a-&gt;limite);         // sai
+    // pede uma "vaga": bloqueia se já há K threads trabalhando
+    sem_wait(a-&gt;limite);
+    // o trabalho em si (resultado vai para a struct)
+    a-&gt;res = a-&gt;entrada * 2;
+    // devolve a vaga para outra thread
+    sem_post(a-&gt;limite);
+    // entra na região crítica (só uma thread por vez)
     pthread_mutex_lock(a-&gt;mutex);
-    total += a-&gt;res;             // região crítica
+    // lê, soma e escreve a global com segurança
+    total += a-&gt;res;
+    // sai da região crítica
     pthread_mutex_unlock(a-&gt;mutex);
+    // nada a retornar (o resultado está na struct)
     return NULL;
 }
 
 int main(int argc, char *argv[]) {
-    int n = 10, k = (argc &gt; 1) ? atoi(argv[1]) : 2;
+    // quantas threads criar
+    int n = 10;
+    // máximo simultâneo: vem do 1º argumento ou é 2 por padrão
+    int k = (argc &gt; 1) ? atoi(argv[1]) : 2;
+    // semáforo que conta as vagas
     sem_t limite;
+    // 0 = entre threads do mesmo processo; valor inicial = k vagas
     sem_init(&amp;limite, 0, k);
+    // cria o mutex já inicializado (destravado)
     pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    // vetor com os IDs das threads
     pthread_t *tids = malloc(sizeof(pthread_t) * n);
+    // vetor de ponteiros para os argumentos
     t_arg **args = malloc(sizeof(t_arg *) * n);
+    // cria as n threads
     for (int i = 0; i &lt; n; i++) {
+        // argumento PRÓPRIO de cada thread, no heap
         args[i] = malloc(sizeof(t_arg));
+        // preenche o id
         args[i]-&gt;id = i;
+        // preenche a entrada
         args[i]-&gt;entrada = i;
+        // todas apontam para o MESMO semáforo
         args[i]-&gt;limite = &amp;limite;
+        // todas apontam para o MESMO mutex
         args[i]-&gt;mutex = &amp;mutex;
+        // cria a thread: guarda o id, opções padrão, função e argumento
         pthread_create(&amp;tids[i], NULL, tarefa, args[i]);
     }
+    // espera as threads na ordem de criação
     for (int i = 0; i &lt; n; i++) {
+        // bloqueia até a thread i terminar
         pthread_join(tids[i], NULL);
+        // agora é seguro ler o resultado
         printf("THREAD %02d RES %d\n", args[i]-&gt;id, args[i]-&gt;res);
+        // libera o argumento DEPOIS do join
         free(args[i]);
     }
+    // todas terminaram: o total está completo
     printf("TOTAL: %ld\n", total);
+    // libera o vetor de ponteiros
     free(args);
+    // libera o vetor de IDs
     free(tids);
+    // destrói o semáforo
     sem_destroy(&amp;limite);
     return 0;
 }</code></pre>
 
 <h2 id="t-deps">Modelo: diagrama de dependências</h2>
-<pre data-lang="c"><code>#include &lt;stdio.h&gt;
-#include &lt;pthread.h&gt;
-#include &lt;semaphore.h&gt;
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;        // printf
+#include &lt;pthread.h&gt;      // pthread_create, pthread_join
+#include &lt;semaphore.h&gt;    // sem_t e funções de semáforo
 
-sem_t sA, sB;                                     // um por parte que tem setas saindo (init 0)
+// Diagrama deste exemplo: A -&gt; C, A -&gt; D, B -&gt; C  ("C depende de A e de B", "D depende de A")
+// um semáforo por parte que tem setas SAINDO (A e B); todos começam em 0
+sem_t sA, sB;
 
-void *t1(void *a) { printf("A\n"); sem_post(&amp;sA); sem_post(&amp;sA); return NULL; }  // A -&gt; C e A -&gt; D
-void *t2(void *a) { printf("B\n"); sem_post(&amp;sB); return NULL; }                 // B -&gt; C
-void *t3(void *a) { sem_wait(&amp;sA); sem_wait(&amp;sB); printf("C\n"); return NULL; }  // C depende de A e B
-void *t4(void *a) { sem_wait(&amp;sA); printf("D\n"); return NULL; }                 // D depende de A
+void *t1(void *a) {
+    // executa a parte A
+    printf("A\n");
+    // avisa "A terminou" para C...
+    sem_post(&amp;sA);
+    // ...e de novo para D (um post para cada seta que sai de A)
+    sem_post(&amp;sA);
+    return NULL;
+}
+void *t2(void *a) {
+    // executa a parte B
+    printf("B\n");
+    // avisa "B terminou" (só C depende de B: um post)
+    sem_post(&amp;sB);
+    return NULL;
+}
+void *t3(void *a) {
+    // C espera A (consome um dos dois posts de sA)
+    sem_wait(&amp;sA);
+    // C espera B
+    sem_wait(&amp;sB);
+    // só imprime depois de A e B
+    printf("C\n");
+    return NULL;
+}
+void *t4(void *a) {
+    // D espera A (consome o outro post de sA)
+    sem_wait(&amp;sA);
+    // só imprime depois de A
+    printf("D\n");
+    return NULL;
+}
 
 int main(void) {
+    // valor inicial 0 = "A ainda não aconteceu"
     sem_init(&amp;sA, 0, 0);
+    // valor inicial 0 = "B ainda não aconteceu"
     sem_init(&amp;sB, 0, 0);
+    // vetor de ponteiros para as funções (para criar em laço)
     void *(*f[4])(void *) = {t1, t2, t3, t4};
+    // IDs das threads
     pthread_t tid[4];
-    for (int i = 0; i &lt; 4; i++) pthread_create(&amp;tid[i], NULL, f[i], NULL);
-    for (int i = 0; i &lt; 4; i++) pthread_join(tid[i], NULL);
+    // cria TODAS as threads em laço
+    for (int i = 0; i &lt; 4; i++)
+        // a thread i executa f[i]; sem argumento (os semáforos são globais)
+        pthread_create(&amp;tid[i], NULL, f[i], NULL);
+    // espera TODAS (só no fim, para não criar dependências extras)
+    for (int i = 0; i &lt; 4; i++)
+        pthread_join(tid[i], NULL);
+    // libera os semáforos
     sem_destroy(&amp;sA);
     sem_destroy(&amp;sB);
     return 0;
 }</code></pre>
 
 <h2 id="t-barreira">Modelo: barreira para N threads</h2>
-<pre data-lang="c"><code>#include &lt;stdio.h&gt;
-#include &lt;pthread.h&gt;
-#include &lt;semaphore.h&gt;
-#define N 4
+<pre data-lang="c"><code>#include &lt;stdio.h&gt;        // printf
+#include &lt;pthread.h&gt;      // threads e mutex
+#include &lt;semaphore.h&gt;    // semáforo
+#define N 4               // número de threads que precisam se encontrar na barreira
 
+// quantas threads já chegaram (compartilhado: precisa de mutex)
 int chegaram = 0;
+// protege o contador "chegaram"
 pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
-sem_t barreira;                                   // init 0
+// semáforo onde as threads ficam presas (começa em 0)
+sem_t barreira;
 
 void *tarefa(void *a) {
+    // trabalho antes do ponto de encontro
     printf("Antes da barreira\n");
+    // trava para mexer no contador
     pthread_mutex_lock(&amp;m);
+    // registra que esta thread chegou
     chegaram++;
+    // 1 se esta for a última a chegar
     int ultimo = (chegaram == N);
+    // destrava (nunca espere no semáforo segurando o mutex!)
     pthread_mutex_unlock(&amp;m);
-    if (ultimo) { for (int i = 0; i &lt; N - 1; i++) sem_post(&amp;barreira); }
-    else sem_wait(&amp;barreira);
+    // a última thread...
+    if (ultimo) {
+        // ...faz N-1 posts:
+        for (int i = 0; i &lt; N - 1; i++)
+            // cada post libera exatamente uma thread presa no sem_wait
+            sem_post(&amp;barreira);
+    // as outras N-1 threads...
+    } else {
+        // ...ficam esperando a última chegar
+        sem_wait(&amp;barreira);
+    }
+    // só roda depois que TODAS chegaram
     printf("Depois da barreira\n");
     return NULL;
 }
 
 int main(void) {
+    // 0 = ninguém pode passar ainda
     sem_init(&amp;barreira, 0, 0);
+    // IDs das threads
     pthread_t t[N];
-    for (int i = 0; i &lt; N; i++) pthread_create(&amp;t[i], NULL, tarefa, NULL);
-    for (int i = 0; i &lt; N; i++) pthread_join(t[i], NULL);
+    // cria as N threads, todas com a mesma função
+    for (int i = 0; i &lt; N; i++)
+        pthread_create(&amp;t[i], NULL, tarefa, NULL);
+    // espera todas terminarem
+    for (int i = 0; i &lt; N; i++)
+        pthread_join(t[i], NULL);
+    // libera o semáforo
     sem_destroy(&amp;barreira);
     return 0;
 }</code></pre>
